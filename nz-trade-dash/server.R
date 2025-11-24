@@ -96,13 +96,17 @@ fin_load_api_key <- function() {
 }
 
 fin_http_get_with_retry <- function(url, params = list(), timeout_sec = 40) {
-   resp <- GET(url, query = params, timeout(timeout_sec))
-   if (resp$status_code == 429) {
-      retry_after <- as.numeric(headers(resp)[["retry-after"]])
-      Sys.sleep(ifelse(is.na(retry_after), 2, retry_after + runif(1, 0, 0.5)))
-      resp <- GET(url, query = params, timeout(timeout_sec))
-   }
-   stop_for_status(resp)
+   # httr::RETRY로 429/5xx 재시도, as.request 에러 방지
+   resp <- httr::RETRY(
+      "GET",
+      url,
+      query = params,
+      httr::timeout(timeout_sec),
+      times = 3,
+      pause_base = 1,
+      pause_cap = 4
+   )
+   httr::stop_for_status(resp)
    resp
 }
 
@@ -135,7 +139,8 @@ fin_get_corp_codes <- function(api_key, path = "corp_codes.csv") {
    if (file.exists(path)) {
       try({
          df <- read_csv(path, show_col_types = FALSE, locale = locale(encoding = "UTF-8"))
-         return(df %>% mutate(across(everything(), as.character)))
+         return(df %>%
+                  mutate(across(everything(), ~trimws(as.character(.)))))
       }, silent = TRUE)
    }
    if (!nzchar(api_key)) stop("API Key 없음")
@@ -233,20 +238,30 @@ fin_extract_accounts <- function(acct_tbl) {
    )
 }
 
-fin_dart_single_acnt <- function(api_key, corp_code, year, reprt_code = "11014") {
+fin_dart_single_acnt <- function(api_key, corp_code, year, reprt_code = "11014", fs_div = "CFS") {
+   corp_code <- trimws(as.character(corp_code))
+   year <- as.integer(year)
+   if (!nzchar(corp_code) || is.na(year)) stop("잘못된 corp_code/year 값")
+   if (is.null(api_key) || !nzchar(api_key)) stop("API Key 없음")
    url <- "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
-   resp <- fin_http_get_with_retry(
-      url,
-      params = list(
-         crtfc_key = api_key,
-         corp_code = corp_code,
-         bsns_year = year,
-         reprt_code = reprt_code
+   resp <- tryCatch(
+      fin_http_get_with_retry(
+         url,
+         params = list(
+            crtfc_key = api_key,
+            corp_code = corp_code,
+            bsns_year = year,
+            reprt_code = reprt_code,
+            fs_div = fs_div
+         ),
+         timeout_sec = 40
       ),
-      timeout_sec = 40
+      error = function(e) {
+         stop(paste0("HTTP 실패 (", year, "): ", conditionMessage(e)))
+      }
    )
    txt <- content(resp, "text", encoding = "UTF-8")
-   js <- fromJSON(txt, simplifyVector = TRUE)
+   js <- jsonlite::fromJSON(txt, simplifyVector = TRUE)
    if (is.null(js$status) || js$status != "000") {
       msg <- if (!is.null(js$message)) js$message else "DART 응답 오류"
       stop(msg)
@@ -256,19 +271,48 @@ fin_dart_single_acnt <- function(api_key, corp_code, year, reprt_code = "11014")
 }
 
 fin_fetch_dart_financials <- function(api_key, corp_code, corp_name, years) {
-   res <- purrr::map(years, function(y) {
-      tryCatch({
-         accts <- fin_dart_single_acnt(api_key, corp_code, y)
-         vals <- fin_extract_accounts(accts)
-         mutate(vals, year = y, source = corp_name)
-      }, error = function(e) {
-         NULL
-      })
+   years <- years[!is.na(years)]
+   years <- as.integer(unique(years))
+   reprt_codes <- c("11011", "11014", "11012", "11013") # business, annual, half, quarterly
+   fs_divs <- c("CFS", "OFS")
+   outcomes <- purrr::map(years, function(y) {
+      best <- NULL
+      errs <- c()
+      done <- FALSE
+      for (rc in reprt_codes) {
+         if (done) break
+         for (fs in fs_divs) {
+            tryCatch({
+               accts <- fin_dart_single_acnt(api_key, corp_code, y, reprt_code = rc, fs_div = fs)
+               vals <- fin_extract_accounts(accts)
+               best <- mutate(vals, year = y, source = paste0(corp_name, " (", fs, "/", rc, ")"))
+               done <- TRUE
+               break
+            }, error = function(e) {
+               errs <<- c(errs, paste0(fs, "/", rc, ": ", conditionMessage(e)))
+            })
+         }
+      }
+      if (!is.null(best)) {
+         list(data = best, error = NULL)
+      } else {
+         list(data = NULL, error = paste(unique(errs), collapse = " / "))
+      }
    })
-   res <- purrr::compact(res)
-   if (length(res) == 0) return(NULL)
-   bind_rows(res) %>%
-      select(.data$year, .data$sales, .data$inventory, .data$net_income, .data$total_assets, .data$cogs, .data$source)
+   data_list <- purrr::compact(purrr::map(outcomes, "data"))
+   df <- if (length(data_list)) {
+      bind_rows(data_list) %>%
+         select(.data$year, .data$sales, .data$inventory, .data$net_income, .data$total_assets, .data$cogs, .data$source)
+   } else {
+      NULL
+   }
+   tibble(
+      year = years,
+      ok = purrr::map_lgl(outcomes, ~is.null(.x$error)),
+      message = purrr::map_chr(outcomes, ~if (is.null(.x$error)) "" else .x$error)
+   ) %>%
+      mutate(year = as.integer(year)) %>%
+      list(status = ., data = df)
 }
 
 fin_sample_dart_financials <- function(corp_name = "상장사", years = 2019:2023) {
@@ -299,8 +343,10 @@ fin_safe_prophet <- function(df, horizon) {
    req(nrow(df) > 2)
    m <- prophet(df %>% transmute(ds = as.Date(paste0(.data$year, "-12-31")), y = .data$sales))
    future <- make_future_dataframe(m, periods = horizon, freq = "year")
-   predict(m, future) %>%
+   preds <- predict(m, future) %>%
       transmute(year = as.integer(format(.data$ds, "%Y")), yhat = .data$yhat)
+   last_year <- max(df$year, na.rm = TRUE)
+   preds %>% filter(.data$year > last_year)
 }
 
 ## 000 user input setup. Please pay close attention and change -----
@@ -11781,13 +11827,14 @@ server <-
          })
       })
 
-      observeEvent(input$fin_fetch_dart, {
-         fin_ensure_corp_df()
-         selected_code <- if (!is.null(input$fin_corp_pick) && nzchar(input$fin_corp_pick)) input$fin_corp_pick else NA_character_
-         if (is.na(selected_code)) {
-            showNotification("상장사를 먼저 선택하세요.", type = "warning", duration = 4)
-            return()
-         }
+   observeEvent(input$fin_fetch_dart, {
+      fin_ensure_corp_df()
+      selected_code <- if (!is.null(input$fin_corp_pick) && nzchar(input$fin_corp_pick)) input$fin_corp_pick else NA_character_
+      selected_code <- trimws(selected_code)
+      if (is.na(selected_code)) {
+         showNotification("상장사를 먼저 선택하세요.", type = "warning", duration = 4)
+         return()
+      }
          corp_nm <- "상장사"
          if (!is.null(fin_values$corp_df)) {
             picked <- fin_values$corp_df %>%
@@ -11804,21 +11851,46 @@ server <-
             fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
             return()
          }
-         years <- seq(as.integer(format(Sys.Date(), "%Y")) - 4, as.integer(format(Sys.Date(), "%Y")))
-         withProgress(message = paste0("DART 재무제표 불러오는 중: ", corp_nm), value = 0.2, {
-            df <- tryCatch(
+         years <- seq(2015, as.integer(format(Sys.Date(), "%Y")))
+      withProgress(message = paste0("DART 재무제표 불러오는 중: ", corp_nm), value = 0.2, {
+            res <- tryCatch(
                fin_fetch_dart_financials(api_key, selected_code, corp_nm, years),
                error = function(e) {
-                  showNotification(paste("DART 요청 실패:", conditionMessage(e)), type = "error", duration = 6)
+                  showNotification(paste("DART 요청 실패:", conditionMessage(e)), type = "error", duration = 8)
                   NULL
                }
             )
+            df <- if (!is.null(res)) res$data else NULL
+            status <- if (!is.null(res)) res$status else NULL
             if (is.null(df) || nrow(df) == 0) {
                fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
-               showNotification("DART 불러오기 실패: 데모 데이터로 대체합니다.", type = "warning", duration = 5)
+               detail <- if (!is.null(status)) {
+                  fails <- status %>% filter(!.data$ok)
+                  msgs <- unique(fails$message)
+                  paste(
+                     if (nrow(fails)) paste0("실패 연도: ", paste(fails$year, collapse = ", ")) else "",
+                     if (length(msgs) && nzchar(msgs[1])) paste0("메시지: ", paste(msgs, collapse = " / ")) else ""
+                  )
+               } else ""
+               msg <- paste("DART 불러오기 실패: 데모 데이터로 대체합니다.", detail)
+               showNotification(msg, type = "warning", duration = 6)
             } else {
                fin_values$df_dart <- df
-               showNotification("DART 데이터가 업데이트되었습니다.", type = "message", duration = 4)
+               dropped <- NULL
+               drop_msgs <- NULL
+               if (!is.null(status)) {
+                  fails <- status %>% filter(!.data$ok)
+                  if (nrow(fails)) dropped <- paste(fails$year, collapse = ", ")
+                  msgs <- unique(fails$message)
+                  if (length(msgs) && nzchar(msgs[1])) drop_msgs <- paste(msgs, collapse = " / ")
+               }
+               if (is.null(dropped)) {
+                  showNotification("DART 데이터가 업데이트되었습니다.", type = "message", duration = 4)
+               } else {
+                  msg <- paste0("DART 업데이트: ", dropped, " 연도는 누락됨")
+                  if (!is.null(drop_msgs)) msg <- paste(msg, " - ", drop_msgs)
+                  showNotification(msg, type = "warning", duration = 8)
+               }
             }
             setProgress(1)
          })
@@ -11834,9 +11906,9 @@ server <-
          req(input$fin_upload$datapath)
          df <- fin_read_upload_df(input$fin_upload$datapath)
          cols <- names(df)
-         year_col <- fin_guess_col(cols, c("year", "년도"))
-         sales_col <- fin_guess_col(cols, c("sale", "매출"))
-         inv_col <- fin_guess_col(cols, c("inv", "재고"))
+         year_col <- fin_guess_col(cols, c("yeondo", "year", "년도"))
+         sales_col <- fin_guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"))
+         inv_col <- fin_guess_col(cols, c("jaego", "inv", "inventory", "재고"))
          output$fin_mapping_ui <- renderUI({
             tagList(
                selectInput("fin_col_year", "연도 컬럼", choices = cols, selected = year_col),
@@ -11943,12 +12015,42 @@ server <-
          if (is.null(chosen_source)) chosen_source <- df_all$source[[1]]
          df <- df_all %>% filter(.data$source == chosen_source)
          fin_validate(fin_need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
-         fc <- fin_safe_prophet(df, input$fin_forecast_y)
+         last_year <- max(df$year, na.rm = TRUE)
+         horizon <- min(as.integer(input$fin_forecast_y), max(0, 2030L - last_year))
+         if (is.na(horizon) || horizon < 1) {
+            showNotification("최근 연도가 2030 이상이라 예측이 없습니다.", type = "warning", duration = 5)
+            return()
+         }
+         fc <- fin_safe_prophet(df, horizon)
          output$fin_fc_table <- renderTable(fc)
          output$fin_fc_plot <- renderPlotly({
-            plot_ly(fc, x = ~year, y = ~yhat, type = "scatter", mode = "lines+markers", name = "예측") %>%
-               add_trace(data = df, x = ~year, y = ~sales, type = "scatter", mode = "markers", name = "실제") %>%
-               layout(yaxis = list(title = "매출액"))
+            combined <- bind_rows(
+               df %>% transmute(year, value = sales),
+               fc %>% transmute(year, value = yhat)
+            ) %>% arrange(year)
+            last_year <- max(df$year, na.rm = TRUE)
+            plot_ly(
+               data = combined,
+               x = ~year, y = ~value,
+               type = "scatter", mode = "lines+markers",
+               name = "매출(실제+예측)"
+            ) %>%
+               layout(
+                  yaxis = list(title = "매출액"),
+                  shapes = list(list(
+                     type = "line", x0 = last_year, x1 = last_year,
+                     y0 = min(combined$value, na.rm = TRUE),
+                     y1 = max(combined$value, na.rm = TRUE),
+                     xref = "x", yref = "y",
+                     line = list(dash = "dash", color = "gray")
+                  )),
+                  annotations = list(list(
+                     x = last_year, y = max(combined$value, na.rm = TRUE),
+                     text = "예측 시작",
+                     showarrow = TRUE, arrowhead = 2, ax = 20, ay = -40,
+                     bgcolor = "white"
+                  ))
+               )
          })
       })
 

@@ -114,7 +114,7 @@ dart_single_acnt <- function(api_key, corp_code, year, reprt_code = "11014") {
     timeout = 40
   )
   txt <- content(resp, "text", encoding = "UTF-8")
-  js <- fromJSON(txt, simplifyVector = TRUE)
+  js <- jsonlite::fromJSON(txt, simplifyVector = TRUE)
   if (is.null(js$status) || js$status != "000") {
     msg <- if (!is.null(js$message)) js$message else "DART 응답 오류"
     stop(msg)
@@ -197,7 +197,7 @@ get_corp_codes <- function(api_key, path = "corp_codes.csv") {
   if (file.exists(path)) {
     try({
       df <- read_csv(path, show_col_types = FALSE, locale = locale(encoding = "UTF-8"))
-      return(df %>% mutate(across(everything(), as.character)))
+      return(df %>% mutate(across(everything(), ~trimws(as.character(.)))))
     }, silent = TRUE)
   }
   if (!nzchar(api_key)) stop("API Key 없음")
@@ -311,8 +311,10 @@ safe_prophet <- function(df, horizon) {
   req(nrow(df) > 2)
   m <- prophet(df %>% transmute(ds = as.Date(paste0(.data$year, "-12-31")), y = .data$sales))
   future <- make_future_dataframe(m, periods = horizon, freq = "year")
-  predict(m, future) %>%
+  preds <- predict(m, future) %>%
     transmute(year = as.integer(format(.data$ds, "%Y")), yhat = .data$yhat)
+  last_year <- max(df$year, na.rm = TRUE)
+  preds %>% filter(.data$year > last_year)
 }
 
 calc_metrics <- function(df) {
@@ -521,7 +523,7 @@ server <- function(input, output, session) {
       return()
     }
 
-    years <- seq(as.integer(format(Sys.Date(), "%Y")) - 4, as.integer(format(Sys.Date(), "%Y")))
+    years <- seq(2015, as.integer(format(Sys.Date(), "%Y")))
     withProgress(message = paste0("DART 재무제표 불러오는 중: ", corp_nm), value = 0.2, {
       df <- tryCatch(
         fetch_dart_financials(api_key, selected_code, corp_nm, years),
@@ -552,9 +554,9 @@ server <- function(input, output, session) {
     req(input$upload$datapath)
     df <- read_upload_df(input$upload$datapath)
     cols <- names(df)
-    year_col <- guess_col(cols, c("year", "년도"))
-    sales_col <- guess_col(cols, c("sale", "매출"))
-    inv_col <- guess_col(cols, c("inv", "재고"))
+    year_col <- guess_col(cols, c("yeondo", "year", "년도"))
+    sales_col <- guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"))
+    inv_col <- guess_col(cols, c("jaego", "inv", "inventory", "재고"))
     output$mapping_ui <- renderUI({
       tagList(
         selectInput("col_year", "연도 컬럼", choices = cols, selected = year_col),
@@ -674,13 +676,40 @@ server <- function(input, output, session) {
 
     df <- df_all %>% filter(.data$source == chosen_source)
     validate(need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
+    last_year <- max(df$year, na.rm = TRUE)
+    horizon <- min(as.integer(input$forecast_y), max(0, 2030L - last_year))
+    validate(need(!is.na(horizon) && horizon >= 1, "최근 연도가 2030 이상이라 예측을 생성할 수 없습니다."))
 
-    fc <- safe_prophet(df, input$forecast_y)
+    fc <- safe_prophet(df, horizon)
     output$fc_table <- renderTable(fc)
     output$fc_plot <- renderPlotly({
-      plot_ly(fc, x = ~year, y = ~yhat, type = "scatter", mode = "lines+markers", name = "예측") %>%
-        add_trace(data = df, x = ~year, y = ~sales, type = "scatter", mode = "markers", name = "실제") %>%
-        layout(yaxis = list(title = "매출액"))
+      combined <- bind_rows(
+        df %>% transmute(year, value = sales),
+        fc %>% transmute(year, value = yhat)
+      ) %>% arrange(year)
+      last_year <- max(df$year, na.rm = TRUE)
+      plot_ly(
+        data = combined,
+        x = ~year, y = ~value,
+        type = "scatter", mode = "lines+markers",
+        name = "매출(실제+예측)"
+      ) %>%
+        layout(
+          yaxis = list(title = "매출액"),
+          shapes = list(list(
+            type = "line", x0 = last_year, x1 = last_year,
+            y0 = min(combined$value, na.rm = TRUE),
+            y1 = max(combined$value, na.rm = TRUE),
+            xref = "x", yref = "y",
+            line = list(dash = "dash", color = "gray")
+          )),
+          annotations = list(list(
+            x = last_year, y = max(combined$value, na.rm = TRUE),
+            text = "예측 시작",
+            showarrow = TRUE, arrowhead = 2, ax = 20, ay = -40,
+            bgcolor = "white"
+          ))
+        )
     })
   })
 }

@@ -360,6 +360,12 @@ body <- dashboardBody(
     tags$style(HTML(".fa-bell { font-size: 17px; }")),
     tags$style(HTML(".fa-check { font-size: 14px; }")),
     tags$style(HTML(".fa-times { font-size: 14px; }")),
+    ## valueBox 텍스트 대비 강화
+    tags$style(HTML("
+      /* valueBox: 숫자는 흰색, 부제목은 짙은 회색 */
+      .small-box h3 { color: #ffffff !important; }
+      .small-box p  { color: #111111 !important; }
+    ")),
 
     # tags$style(HTML(".fa-twitter { font-size: 10px; color:red;}")),
     # tags$style(HTML(".fa-facebook { font-size: 10px; color:red;}")),
