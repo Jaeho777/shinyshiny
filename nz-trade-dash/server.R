@@ -10,6 +10,7 @@ library(treemap)
 library(timevis)
 library(dplyr)
 library(magrittr)
+library(purrr)
 library(tidyr)
 library(stringr)
 library(readr)
@@ -50,6 +51,7 @@ source('share_load.R')
 
 ## Financial benchmarking helpers (ported from app.R with fin_ prefix)
 fin_load_api_key <- function() {
+   key <- ""
    pick_env <- function() {
       for (nm in c("DART_API_KEY", "DART_KEY", "DART_API")) {
          val <- Sys.getenv(nm)
@@ -66,21 +68,30 @@ fin_load_api_key <- function() {
       kv <- strsplit(lines, "=", fixed = TRUE)
       kv <- Filter(function(x) length(x) == 2, kv)
       if (length(kv) == 0) return(NULL)
-      env_list <- setNames(trimws(vapply(kv, `[`, character(1), 2)), trimws(vapply(kv, `[`, character(1), 1)))
+      clean_val <- function(v) {
+         v <- trimws(v)
+         sub("^['\\\"](.*)['\\\"]$", "\\\\1", v)
+      }
+      env_list <- setNames(
+         vapply(kv, function(x) clean_val(x[[2]]), character(1)),
+         trimws(vapply(kv, `[`, character(1), 1))
+      )
       for (nm in c("DART_API_KEY", "DART_KEY", "DART_API")) {
          if (!is.null(env_list[[nm]]) && nzchar(env_list[[nm]])) return(env_list[[nm]])
       }
       NULL
    }
    key <- pick_env()
-   if (nzchar(key)) return(key)
+   if (!is.null(key) && nzchar(key)) return(key)
    if (requireNamespace("dotenv", quietly = TRUE)) {
       try(dotenv::load_dotenv(), silent = TRUE)
       key <- pick_env()
-      if (nzchar(key)) return(key)
+      if (!is.null(key) && nzchar(key)) return(key)
    }
-   key <- read_env_key(".env")
-   if (nzchar(key)) return(key)
+   for (p in c(".env", file.path("nz-trade-dash", ".env"))) {
+      key <- read_env_key(p)
+      if (!is.null(key) && nzchar(key)) return(key)
+   }
    NULL
 }
 
@@ -177,7 +188,7 @@ fin_search_corp_smart <- function(corp_df, query, limit = 30) {
       hit <- corp_df %>% filter(.data$stock_code == q)
       if (nrow(hit)) return(head(hit, limit))
    }
-   alias <- fin_alias_map[[q_norm]]
+   alias <- if (q_norm %in% names(fin_alias_map)) fin_alias_map[[q_norm]] else NULL
    tokens <- if (!is.null(alias)) {
       fin_norm_name(alias)
    } else {
@@ -9512,6 +9523,9 @@ server <-
       
       ## reactive values ---------------------
       observe({
+         if (is.null(input$rbtn_intel_by_hs) || is.null(input$HSCodeTable_rows_selected) || length(input$HSCodeTable_rows_selected) == 0) {
+            return()
+         }
          ## --- show loading message when click on HS codes -------
          try(
             if( !is.null(input$HSCodeTable_rows_selected) #& 
@@ -10403,7 +10417,7 @@ server <-
                         choices =  c('Please select a commodity' = "" , 
                                      as.character(rv_intelHS$tmp_tab$Name)
                         ), #input$select_comodity_ex,
-                        selected = NULL,  width = "500px",
+                        selected = "",  width = "500px",
                         multiple = F)
       })
       
@@ -11634,6 +11648,34 @@ server <-
          corp_real_loaded = FALSE
       )
 
+      fin_validate <- shiny::validate
+      fin_need <- shiny::need
+
+      fin_ensure_corp_df <- function() {
+         if (!is.null(fin_values$corp_df) && nrow(fin_values$corp_df) > 0) return()
+         corp_path <- fin_find_corp_codes_path()
+         if (!is.null(corp_path)) {
+            fin_values$corp_df <- tryCatch(
+               fin_get_corp_codes("", corp_path),
+               error = function(e) {
+                  showNotification("corp_codes.csv 읽기 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
+                  fin_demo_corp_codes()
+               }
+            )
+            fin_values$corp_real_loaded <- TRUE
+         } else {
+            fin_values$corp_df <- fin_demo_corp_codes()
+         }
+      }
+
+      # 기본적으로 데모 데이터를 미리 채워서 화면이 비어 보이지 않도록 함
+      observeEvent(TRUE, {
+         if (is.null(fin_values$df_dart) && is.null(fin_values$df_my_norm)) {
+            fin_values$df_dart <- fin_sample_dart_financials(corp_name = "상장사(데모)")
+            fin_values$df_my_norm <- fin_sample_my_company()
+         }
+      }, once = TRUE)
+
       fin_find_corp_codes_path <- function() {
          for (p in c("corp_codes.csv", file.path("nz-trade-dash", "corp_codes.csv"))) {
             if (file.exists(p)) return(p)
@@ -11678,9 +11720,14 @@ server <-
       })
 
       observeEvent(input$fin_corp_search, {
+         fin_ensure_corp_df()
          query <- if (is.null(input$fin_corp_query)) "" else trimws(input$fin_corp_query)
          if (!nzchar(query)) {
             showNotification("검색어를 입력하세요.", type = "warning", duration = 3)
+            return()
+         }
+         if (is.null(fin_values$corp_df) || nrow(fin_values$corp_df) == 0) {
+            showNotification("기업 리스트가 준비되지 않았습니다. 잠시 후 다시 시도하거나 데모를 사용하세요.", type = "error", duration = 4)
             return()
          }
          withProgress(message = "검색 중...", value = 0.1, {
@@ -11735,6 +11782,7 @@ server <-
       })
 
       observeEvent(input$fin_fetch_dart, {
+         fin_ensure_corp_df()
          selected_code <- if (!is.null(input$fin_corp_pick) && nzchar(input$fin_corp_pick)) input$fin_corp_pick else NA_character_
          if (is.na(selected_code)) {
             showNotification("상장사를 먼저 선택하세요.", type = "warning", duration = 4)
@@ -11758,7 +11806,13 @@ server <-
          }
          years <- seq(as.integer(format(Sys.Date(), "%Y")) - 4, as.integer(format(Sys.Date(), "%Y")))
          withProgress(message = paste0("DART 재무제표 불러오는 중: ", corp_nm), value = 0.2, {
-            df <- fin_fetch_dart_financials(api_key, selected_code, corp_nm, years)
+            df <- tryCatch(
+               fin_fetch_dart_financials(api_key, selected_code, corp_nm, years),
+               error = function(e) {
+                  showNotification(paste("DART 요청 실패:", conditionMessage(e)), type = "error", duration = 6)
+                  NULL
+               }
+            )
             if (is.null(df) || nrow(df) == 0) {
                fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
                showNotification("DART 불러오기 실패: 데모 데이터로 대체합니다.", type = "warning", duration = 5)
@@ -11836,7 +11890,7 @@ server <-
 
       output$fin_kpi_row <- renderUI({
          df <- fin_combined_df()
-         validate(need(nrow(df) > 0, "데이터를 불러오세요"))
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
          latest_year <- max(df$year, na.rm = TRUE)
          latest <- df %>% filter(.data$year == latest_year)
          mk_box <- function(title, value, color = "primary") {
@@ -11855,14 +11909,14 @@ server <-
 
       output$fin_ts_plot <- renderPlotly({
          df <- fin_combined_df()
-         validate(need(nrow(df) > 0, "데이터를 불러오세요"))
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
          plot_ly(df, x = ~year, y = ~sales, color = ~source, type = "scatter", mode = "lines+markers") %>%
             layout(yaxis = list(title = "매출액"))
       })
 
       output$fin_quad_plot <- renderPlotly({
          df <- fin_combined_df()
-         validate(need(nrow(df) > 0, "데이터를 불러오세요"))
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
          x_mean <- mean(df$inventory_turnover, na.rm = TRUE)
          y_mean <- mean(df$roa, na.rm = TRUE)
          plot_ly(df, x = ~inventory_turnover, y = ~roa, color = ~source, type = "scatter", mode = "markers",
@@ -11881,14 +11935,14 @@ server <-
 
       observeEvent(input$fin_do_forecast, {
          df_all <- fin_combined_df()
-         validate(need(nrow(df_all) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
+         fin_validate(fin_need(nrow(df_all) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
          chosen_source <- NULL
          non_my <- df_all %>% filter(.data$source != "My Company")
          if (nrow(non_my) > 0) chosen_source <- non_my$source[[1]]
          if (is.null(chosen_source) && any(df_all$source == "My Company")) chosen_source <- "My Company"
          if (is.null(chosen_source)) chosen_source <- df_all$source[[1]]
          df <- df_all %>% filter(.data$source == chosen_source)
-         validate(need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
+         fin_validate(fin_need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
          fc <- fin_safe_prophet(df, input$fin_forecast_y)
          output$fin_fc_table <- renderTable(fc)
          output$fin_fc_plot <- renderPlotly({
@@ -11908,14 +11962,3 @@ server <-
                height="800", width="100%")
          })
    }
-
-
-
-
-
-
-
-
-
-
-

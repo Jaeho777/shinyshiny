@@ -36,6 +36,7 @@ theme <- bs_theme(
 # Helper functions
 # ---------------------------
 load_api_key <- function() {
+  key <- ""
   read_env_key <- function(path) {
     if (!file.exists(path)) return(NULL)
     lines <- readLines(path, warn = FALSE)
@@ -45,7 +46,14 @@ load_api_key <- function() {
     kv <- strsplit(lines, "=", fixed = TRUE)
     kv <- Filter(function(x) length(x) == 2, kv)
     if (length(kv) == 0) return(NULL)
-    env_list <- setNames(trimws(vapply(kv, `[`, character(1), 2)), trimws(vapply(kv, `[`, character(1), 1)))
+    clean_val <- function(v) {
+      v <- trimws(v)
+      sub("^['\\\"](.*)['\\\"]$", "\\\\1", v)
+    }
+    env_list <- setNames(
+      vapply(kv, function(x) clean_val(x[[2]]), character(1)),
+      trimws(vapply(kv, `[`, character(1), 1))
+    )
     for (nm in c("DART_API_KEY", "DART_KEY", "DART_API")) {
       if (!is.null(env_list[[nm]]) && nzchar(env_list[[nm]])) return(env_list[[nm]])
     }
@@ -61,17 +69,19 @@ load_api_key <- function() {
   }
 
   key <- pick_env()
-  if (nzchar(key)) return(key)
+  if (!is.null(key) && nzchar(key)) return(key)
 
   if (requireNamespace("dotenv", quietly = TRUE)) {
     try(dotenv::load_dotenv(), silent = TRUE)
     key <- pick_env()
-    if (nzchar(key)) return(key)
+    if (!is.null(key) && nzchar(key)) return(key)
   }
 
   # fallback: manual parse .env if dotenv 패키지 미설치/미로딩
-  key <- read_env_key(".env")
-  if (nzchar(key)) return(key)
+  for (p in c(".env", file.path("nz-trade-dash", ".env"))) {
+    key <- read_env_key(p)
+    if (!is.null(key) && nzchar(key)) return(key)
+  }
   NULL
 }
 
