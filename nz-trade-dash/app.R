@@ -101,7 +101,7 @@ safe_num <- function(x) {
   as.numeric(gsub("[^0-9\\.\\-]", "", x))
 }
 
-dart_single_acnt <- function(api_key, corp_code, year, reprt_code = "11014") {
+dart_single_acnt <- function(api_key, corp_code, year, reprt_code = "11014", fs_div = "CFS") {
   url <- "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
   resp <- http_get_with_retry(
     url,
@@ -109,7 +109,8 @@ dart_single_acnt <- function(api_key, corp_code, year, reprt_code = "11014") {
       crtfc_key = api_key,
       corp_code = corp_code,
       bsns_year = year,
-      reprt_code = reprt_code
+      reprt_code = reprt_code,
+      fs_div = fs_div
     ),
     timeout = 40
   )
@@ -250,7 +251,7 @@ search_corp_smart <- function(corp_df, query, limit = 30) {
     hit <- corp_df %>% filter(.data$stock_code == q)
     if (nrow(hit)) return(head(hit, limit))
   }
-  alias <- alias_map[[q_norm]]
+  alias <- if (q_norm %in% names(alias_map)) alias_map[[q_norm]] else NULL
   tokens <- if (!is.null(alias)) {
     norm_name(alias)
   } else {
@@ -389,9 +390,9 @@ ui <- page_sidebar(
         p(class = "sub", "상장사 vs 내 가게: 요약 지표와 추이를 한눈에")
       ),
       uiOutput("kpi_row"),
-      plotlyOutput("ts_plot")
+      plotlyOutput("ts_plot_summary")
     ),
-    nav_panel("개요", plotlyOutput("ts_plot")),
+    nav_panel("개요", plotlyOutput("ts_plot_overview")),
     nav_panel("4분면", plotlyOutput("quad_plot")),
     nav_panel("예측", plotlyOutput("fc_plot"), tableOutput("fc_table"))
   ),
@@ -610,7 +611,7 @@ server <- function(input, output, session) {
   # KPI cards (최근 연도 기준)
   output$kpi_row <- renderUI({
     df <- combined_df()
-    validate(need(nrow(df) > 0, "데이터를 불러오세요"))
+    shiny::validate(shiny::need(nrow(df) > 0, "데이터를 불러오세요"))
     latest_year <- max(df$year, na.rm = TRUE)
     latest <- df %>% filter(.data$year == latest_year)
     mk_card <- function(title, value, color = "primary") {
@@ -631,9 +632,16 @@ server <- function(input, output, session) {
   })
 
   # Time series plot
-  output$ts_plot <- renderPlotly({
+  output$ts_plot_summary <- renderPlotly({
     df <- combined_df()
-    validate(need(nrow(df) > 0, "데이터를 불러오세요"))
+    shiny::validate(shiny::need(nrow(df) > 0, "데이터를 불러오세요"))
+    plot_ly(df, x = ~year, y = ~sales, color = ~source, type = "scatter", mode = "lines+markers") %>%
+      layout(yaxis = list(title = "매출액"))
+  })
+
+  output$ts_plot_overview <- renderPlotly({
+    df <- combined_df()
+    shiny::validate(shiny::need(nrow(df) > 0, "데이터를 불러오세요"))
     plot_ly(df, x = ~year, y = ~sales, color = ~source, type = "scatter", mode = "lines+markers") %>%
       layout(yaxis = list(title = "매출액"))
   })
@@ -641,7 +649,7 @@ server <- function(input, output, session) {
   # Quadrant plot
   output$quad_plot <- renderPlotly({
     df <- combined_df()
-    validate(need(nrow(df) > 0, "데이터를 불러오세요"))
+    shiny::validate(shiny::need(nrow(df) > 0, "데이터를 불러오세요"))
     x_mean <- mean(df$inventory_turnover, na.rm = TRUE)
     y_mean <- mean(df$roa, na.rm = TRUE)
     plot_ly(df, x = ~inventory_turnover, y = ~roa, color = ~source, type = "scatter", mode = "markers",
@@ -661,7 +669,7 @@ server <- function(input, output, session) {
   # Forecast
   observeEvent(input$do_forecast, {
     df_all <- combined_df()
-    validate(need(nrow(df_all) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
+    shiny::validate(shiny::need(nrow(df_all) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
 
     # Prophet은 중복된 날짜를 허용하지 않으므로 단일 소스만 선택
     # 1순위: 선택한 상장사, 2순위: My Company, 3순위: 첫 번째 소스
@@ -675,10 +683,10 @@ server <- function(input, output, session) {
     if (is.null(chosen_source)) chosen_source <- df_all$source[[1]]
 
     df <- df_all %>% filter(.data$source == chosen_source)
-    validate(need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
+    shiny::validate(shiny::need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
     last_year <- max(df$year, na.rm = TRUE)
     horizon <- min(as.integer(input$forecast_y), max(0, 2030L - last_year))
-    validate(need(!is.na(horizon) && horizon >= 1, "최근 연도가 2030 이상이라 예측을 생성할 수 없습니다."))
+    shiny::validate(shiny::need(!is.na(horizon) && horizon >= 1, "최근 연도가 2030 이상이라 예측을 생성할 수 없습니다."))
 
     fc <- safe_prophet(df, horizon)
     output$fc_table <- renderTable(fc)

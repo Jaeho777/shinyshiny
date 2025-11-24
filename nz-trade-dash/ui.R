@@ -53,9 +53,9 @@ source("helper_funs.R")
 ## 1. header -------------------------------
 header <-
   dashboardHeader(
-    title = HTML("New Zealand Trade Intelligence"),
+    title = HTML("패션 재고관리 예측 시스템"),
     disable = FALSE,
-    titleWidth = 550,
+    titleWidth = 250,
     dropdownMenuCustom(
       type = "message",
       customSentence = customSentence,
@@ -113,213 +113,224 @@ header <-
         icon = icon("tumblr"),
         href = "http://www.tumblr.com/share?v=3&u=http%3A%2F%2Ftradeintelligence.mbie.govt.nz&t=New%20Zealand%20Trade%20Intelligence%20Dashboard"
       )
+    ),
+    tags$li(class = "dropdown",
+      actionLink("go_dashboard", icon("dashboard"))
+    ),
+    tags$li(class = "dropdown",
+      actionLink("go_fin", icon("line-chart"))
+    ),
+    tags$li(class = "dropdown",
+      actionLink("go_market", icon("globe"))
     )
   )
-
-header$children[[2]]$children[[2]] <- header$children[[2]]$children[[1]]
-header$children[[2]]$children[[1]] <- tags$a(
-  href = "http://www.mbie.govt.nz",
-  tags$img(src = "MBIELogo/logo_reserve_small_corp1.png"),
-  target = "_blank"
-) # ,height='67',width='228.6', align = 'left'
-
 
 ## 2. siderbar ------------------------------
 siderbar <-
-  dashboardSidebar(
-    width = 200,
-    sidebarMenu(
-      id = "sidebar",
-      style = "position: relative; overflow: visible;",
-      # style = "position: relative; overflow: visible; overflow-y:scroll",
-      # style = 'height: 90vh; overflow-y: auto;',
-      ## 1st tab show the Main dashboard -----------
-      menuItem("Main Dashboard",
-        tabName = "dashboard", icon = icon("dashboard"),
-        badgeLabel = maxYear_lb, badgeColor = "green"
-      ),
+	  dashboardSidebar(
+	    width = 200,
+	    sidebarMenu(
+	      id = "sidebar",
+	      style = "position: relative; overflow: visible;",
+	      # style = "position: relative; overflow: visible; overflow-y:scroll",
+	      # style = 'height: 90vh; overflow-y: auto;',
+	      ## 1st tab show the Main dashboard -----------
+	      menuItem("Main Dashboard",
+	        tabName = "dashboard", icon = icon("dashboard"),
+	        badgeLabel = maxYear_lb, badgeColor = "green"
+	      ),
 
-      ## Financial benchmarking tab
-      menuItem("Financial Benchmarking", tabName = "fin_bench", icon = icon("chart-line")),
+	      ## Financial benchmarking tab
+	      menuItem("Financial Benchmarking", tabName = "fin_bench", icon = icon("chart-line")),
+	      ## Financial benchmarking settings panel (inline, like Market Intelligence)
+	      div(
+	        id = "sidebar_fin_bench",
+	        conditionalPanel(
+	          "input.sidebar === 'fin_bench'",
+	          tags$hr(),
+	          h4("설정"),
+	          textInput("fin_corp_query", "상장사 검색", placeholder = "예: 한섬, 020000"),
+	          actionButton("fin_corp_search", "검색"),
+	          selectInput("fin_corp_pick", "상장사 선택", choices = c(), selected = NULL),
+	          actionButton("fin_fetch_dart", "DART 불러오기"),
+	          actionButton("fin_load_demo", "데모 데이터 로드"),
+	          hr(),
+	          fileInput("fin_upload", "내 가게 파일 업로드", accept = c(".xlsx", ".xls", ".csv")),
+	          uiOutput("fin_mapping_ui"),
+	          hr(),
+	          numericInput("fin_forecast_y", "예측 연도 수", value = 3, min = 1, max = 5),
+	          actionButton("fin_do_forecast", "예측 실행", class = "btn-primary")
+	        )
+	      ),
 
-      ## add conditional panel to show more
-      # conditionalPanel( "input.sidebar === 'dashboard'",
-      #                   actionButton("btn_show_more",
-      #                                paste0(' Show more details'),
-      #                                icon = icon('chevron-circle-down'),
-      #                                style='padding-top:0px; padding-bottom:0px;padding-left:3px;padding-right:3px; '
-      #                                )
-      #                   ),
+	      useShinyjs(),
 
-      ## 2nd Second tab shows the country/region level tab --------------
-      menuItem("Market Intelligence", tabName = "country_intel", icon = icon("globe")),
-      div(
-        id = "sidebar_cr",
-        conditionalPanel(
-          "input.sidebar === 'country_intel'",
-          selectizeInput("select_country",
-            "Select or search for one or multiple markets",
-            choices = list_country,
-            selected = NULL, width = "200px",
-            multiple = T
-          ), # ,
-          # actionButton('btn_country','Submit')
+	      ## 2nd Second tab shows the country/region level tab --------------
+	      menuItem("Market Intelligence", tabName = "country_intel", icon = icon("globe")),
+	      div(
+	        id = "sidebar_cr",
+	        conditionalPanel(
+	          "input.sidebar === 'country_intel'",
+	          selectizeInput("select_country",
+	            "Select or search for one or multiple markets",
+	            choices = list_country,
+	            selected = NULL, width = "200px",
+	            multiple = T
+	          ), # ,
+	          # actionButton('btn_country','Submit')
 
-          ## action button to build report
-          actionButton("btn_build_country_report",
-            paste0("Build Report"),
-            icon = icon("wrench")
-          ),
+	          ## action button to build report
+	          actionButton("btn_build_country_report",
+	            paste0("Build Report"),
+	            icon = icon("wrench")
+	          ),
 
-          ## reset side bar selectoin
-          actionButton("btn_reset_cr",
-            "Reset",
-            icon = icon("refresh")
-          )
-        )
-      ),
+	          ## reset side bar selectoin
+	          actionButton("btn_reset_cr",
+	            "Reset",
+	            icon = icon("refresh")
+	          )
+	        )
+	      ),
 
-      ## 3rd tab shows commodity intel ----------
-      menuItem("Commodity Intelligence",
-        tabName = "commodity_intel", icon = icon("barcode"), startExpanded = F,
-        menuSubItem("Exports", tabName = "ci_exports", icon = icon("export", lib = "glyphicon")),
-        menuSubItem("Imports", tabName = "ci_imports", icon = icon("import", lib = "glyphicon")),
-        menuSubItem("Intelligence by HS code", tabName = "ci_intel_by_hs", icon = icon("bolt"))
-      ),
+	      ## 3rd tab shows commodity intel ----------
+	      menuItem("Commodity Intelligence",
+	        tabName = "commodity_intel", icon = icon("barcode"), startExpanded = F,
+	        menuSubItem("Exports", tabName = "ci_exports", icon = icon("export", lib = "glyphicon")),
+	        menuSubItem("Imports", tabName = "ci_imports", icon = icon("import", lib = "glyphicon")),
+	        menuSubItem("Intelligence by HS code", tabName = "ci_intel_by_hs", icon = icon("bolt"))
+	      ),
 
-      ## Show panel only when Commodity intelligence sidebar is selected
-      useShinyjs(),
+	      ## give sidebar inputs a id so that it can be manipulated by css
+	      div(
+	        id = "sidebar_ci_exports",
+	        conditionalPanel(
+	          "input.sidebar === 'ci_exports'",
 
-      ## give sidebar inputs a id so that it can be manipulated by css
-      div(
-        id = "sidebar_ci_exports",
-        conditionalPanel(
-          "input.sidebar === 'ci_exports'",
+	          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
+	          radioButtons("rbtn_prebuilt_diy_ex",
+	            tags$p("Step 1:", tags$br(), "Select commodities:"),
+	            choices = c("Pre-defined", "Self-defined"),
+	            selected = "Pre-defined",
+	            inline = F,
+	            width = "200px"
+	          ),
 
-          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
-          radioButtons("rbtn_prebuilt_diy_ex",
-            tags$p("Step 1:", tags$br(), "Select commodities:"),
-            choices = c("Pre-defined", "Self-defined"),
-            selected = "Pre-defined",
-            inline = F,
-            width = "200px"
-          ),
+	          ## conditional on select pre-built ones
+	          conditionalPanel(
+	            "input.rbtn_prebuilt_diy_ex == 'Pre-defined'",
+	            selectizeInput("select_comodity_ex",
+	              tags$p("Step 2:", tags$br(), "Select or search commodities"),
+	              choices = list_snz_commodity_ex,
+	              selected = NULL, width = "200px",
+	              multiple = T
+	            )
+	          ),
+	          ## conditonal on build your own report
+	          conditionalPanel(
+	            "input.rbtn_prebuilt_diy_ex == 'Self-defined'",
+	            fileInput("file_comodity_ex",
+	              tags$p("Step 2:", tags$br(), "Upload self-defined HS codes groupings"),
+	              accept = c(".csv"),
+	              width = "200px",
+	              multiple = F,
+	              buttonLabel = "Upload CSV"
+	            )
+	          ),
+	          ## action button to build report
+	          actionButton("btn_build_commodity_report_ex",
+	            paste0("Build Report"),
+	            icon = icon("wrench")
+	          ),
 
-          ## conditional on select pre-built ones
-          conditionalPanel(
-            "input.rbtn_prebuilt_diy_ex == 'Pre-defined'",
-            selectizeInput("select_comodity_ex",
-              tags$p("Step 2:", tags$br(), "Select or search commodities"),
-              choices = list_snz_commodity_ex,
-              selected = NULL, width = "200px",
-              multiple = T
-            )
-          ),
-          ## conditonal on build your own report
-          conditionalPanel(
-            "input.rbtn_prebuilt_diy_ex == 'Self-defined'",
-            fileInput("file_comodity_ex",
-              tags$p("Step 2:", tags$br(), "Upload self-defined HS codes groupings"),
-              accept = c(".csv"),
-              width = "200px",
-              multiple = F,
-              buttonLabel = "Upload CSV"
-            )
-          ),
-          ## action button to build report
-          actionButton("btn_build_commodity_report_ex",
-            paste0("Build Report"),
-            icon = icon("wrench")
-          ),
+	          ## reset side bar selectoin
+	          actionButton("btn_reset_ci_ex",
+	            "Reset",
+	            icon = icon("refresh")
+	          )
+	        )
+	      ),
 
-          ## reset side bar selectoin
-          actionButton("btn_reset_ci_ex",
-            "Reset",
-            icon = icon("refresh")
-          )
-        )
-      ),
+	      ## Show panel only when Commodity intelligence sidebar is selected
+	      div(
+	        id = "sidebar_ci_imports",
+	        conditionalPanel(
+	          "input.sidebar === 'ci_imports'",
 
-      ## Show panel only when Commodity intelligence sidebar is selected
-      div(
-        id = "sidebar_ci_imports",
-        conditionalPanel(
-          "input.sidebar === 'ci_imports'",
+	          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
+	          radioButtons("rbtn_prebuilt_diy_im",
+	            tags$p("Step 1:", tags$br(), "Select commodities:"),
+	            choices = c("Pre-defined", "Self-defined"),
+	            selected = "Pre-defined",
+	            inline = F,
+	            width = "200px"
+	          ),
 
-          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
-          radioButtons("rbtn_prebuilt_diy_im",
-            tags$p("Step 1:", tags$br(), "Select commodities:"),
-            choices = c("Pre-defined", "Self-defined"),
-            selected = "Pre-defined",
-            inline = F,
-            width = "200px"
-          ),
+	          ## conditional on select pre-built ones
+	          conditionalPanel(
+	            "input.rbtn_prebuilt_diy_im == 'Pre-defined'",
+	            selectizeInput("select_comodity_im",
+	              tags$p("Step 2:", tags$br(), "Select or search commodities"),
+	              choices = list_snz_commodity_im,
+	              selected = NULL, width = "200px",
+	              multiple = T
+	            )
+	          ),
+	          ## conditonal on build your own report
+	          conditionalPanel(
+	            "input.rbtn_prebuilt_diy_im == 'Self-defined'",
+	            fileInput("file_comodity_im",
+	              tags$p("Step 2:", tags$br(), "Upload self-defined HS codes groupings"),
+	              accept = c(".csv"),
+	              width = "200px",
+	              multiple = F,
+	              buttonLabel = "Upload CSV"
+	            )
+	          ),
 
-          ## conditional on select pre-built ones
-          conditionalPanel(
-            "input.rbtn_prebuilt_diy_im == 'Pre-defined'",
-            selectizeInput("select_comodity_im",
-              tags$p("Step 2:", tags$br(), "Select or search commodities"),
-              choices = list_snz_commodity_im,
-              selected = NULL, width = "200px",
-              multiple = T
-            )
-          ),
-          ## conditonal on build your own report
-          conditionalPanel(
-            "input.rbtn_prebuilt_diy_im == 'Self-defined'",
-            fileInput("file_comodity_im",
-              tags$p("Step 2:", tags$br(), "Upload self-defined HS codes groupings"),
-              accept = c(".csv"),
-              width = "200px",
-              multiple = F,
-              buttonLabel = "Upload CSV"
-            )
-          ),
+	          ## action button to build report
+	          actionButton("btn_build_commodity_report_im",
+	            paste0("Build Report"),
+	            icon = icon("wrench")
+	          ),
 
-          ## action button to build report
-          actionButton("btn_build_commodity_report_im",
-            paste0("Build Report"),
-            icon = icon("wrench")
-          ),
+	          ## reset side bar selectoin
+	          actionButton("btn_reset_ci_im",
+	            "Reset",
+	            icon = icon("refresh")
+	          )
+	        )
+	      ),
 
-          ## reset side bar selectoin
-          actionButton("btn_reset_ci_im",
-            "Reset",
-            icon = icon("refresh")
-          )
-        )
-      ),
+	      ## Show panel only when Commodity intelligence sidebar is selected
+	      div(
+	        id = "sidebar_ci_intel_by_hs",
+	        conditionalPanel(
+	          "input.sidebar === 'ci_intel_by_hs'",
+	          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
+	          radioButtons("rbtn_intel_by_hs",
+	            tags$p("Intelligence reported on:"),
+	            choices = c("Exports", "Imports"),
+	            selected = "Exports",
+	            inline = F,
+	            width = "200px"
+	          )
+	        )
+	      ),
 
-      ## Show panel only when Commodity intelligence sidebar is selected
-      div(
-        id = "sidebar_ci_intel_by_hs",
-        conditionalPanel(
-          "input.sidebar === 'ci_intel_by_hs'",
-          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
-          radioButtons("rbtn_intel_by_hs",
-            tags$p("Intelligence reported on:"),
-            choices = c("Exports", "Imports"),
-            selected = "Exports",
-            inline = F,
-            width = "200px"
-          )
-        )
-      ),
+	      ## 4th tab HS finder -------------------------
+	      # menuItem("HS code finder", tabName = 'hs_finder', icon = icon('search') ),
 
-      ## 4th tab HS finder -------------------------
-      # menuItem("HS code finder", tabName = 'hs_finder', icon = icon('search') ),
+	      ## 5th tab Data source, definition , i.e., help ---------------
+	      menuItem("FAQs", tabName = "help", icon = icon("question-circle")),
 
-      ## 5th tab Data source, definition , i.e., help ---------------
-      menuItem("FAQs", tabName = "help", icon = icon("question-circle")),
-
-      ## 6th tab monthly update ----------------------
-      menuItem("Stats NZ Releases",
-        tabName = "monthly_update", icon = icon("bell"),
-        badgeLabel = "new", badgeColor = "green"
-      )
-    )
-  )
+	      ## 6th tab monthly update ----------------------
+	      menuItem("Stats NZ Releases",
+	        tabName = "monthly_update", icon = icon("bell"),
+	        badgeLabel = "new", badgeColor = "green"
+	      )
+	    )
+	  )
 
 ## 3. body --------------------------------
 body <- dashboardBody(
@@ -341,8 +352,18 @@ body <- dashboardBody(
     # tags$script(src = "world.js" ),
     tags$script("document.title = 'New Zealand Trade Intelligence Dashboard'"),
 
-    ### Styles
-    tags$style(HTML(".small-box {height: 65px}")),
+	    ### Styles
+	    tags$style(HTML("
+	      .small-box {
+	        height: 80px;
+	        padding-top: 6px;
+	        padding-bottom: 4px;
+	      }
+	      .small-box h3 {
+	        margin: 0;
+	        line-height: 1.15;
+	      }
+	    ")),
     tags$style(HTML(".fa { font-size: 35px; }")),
     tags$style(HTML(".glyphicon { font-size: 33px; }")), ## use glyphicon package
     tags$style(HTML(".fa-dashboard { font-size: 20px; }")),
@@ -354,18 +375,46 @@ body <- dashboardBody(
     tags$style(HTML(".fa-search { font-size: 15px; }")),
     tags$style(HTML(".fa-comment { font-size: 20px; }")),
     tags$style(HTML(".fa-share-alt { font-size: 20px; }")),
-    tags$style(HTML(".fa-envelope { font-size: 20px; }")),
-    tags$style(HTML(".fa-question-circle { font-size: 20px; }")),
-    tags$style(HTML(".fa-chevron-circle-down { font-size: 15px; }")),
-    tags$style(HTML(".fa-bell { font-size: 17px; }")),
-    tags$style(HTML(".fa-check { font-size: 14px; }")),
-    tags$style(HTML(".fa-times { font-size: 14px; }")),
-    ## valueBox 텍스트 대비 강화
-    tags$style(HTML("
-      /* valueBox: 숫자는 흰색, 부제목은 짙은 회색 */
-      .small-box h3 { color: #ffffff !important; }
-      .small-box p  { color: #111111 !important; }
-    ")),
+	    tags$style(HTML(".fa-envelope { font-size: 20px; }")),
+	    tags$style(HTML(".fa-question-circle { font-size: 20px; }")),
+	    tags$style(HTML(".fa-chevron-circle-down { font-size: 15px; }")),
+	    tags$style(HTML(".fa-bell { font-size: 17px; }")),
+	    tags$style(HTML(".fa-check { font-size: 14px; }")),
+	    tags$style(HTML(".fa-times { font-size: 14px; }")),
+	    ## 헤더 제목 왼쪽 정렬
+	    tags$style(HTML("
+	      .main-header .logo {
+	        text-align: left;
+	        padding-left: 15px;
+	      }
+	    ")),
+	    ## 사이드바 메뉴를 조금 더 왼쪽으로
+	    tags$style(HTML("
+	      .main-sidebar .sidebar .sidebar-menu > li > a {
+	        padding-left: 10px;
+	      }
+	    ")),
+	    ## valueBox 텍스트 대비 강화
+	    tags$style(HTML("
+	      /* 기본 valueBox 스타일 */
+	      .small-box h3 { color: #ffffff !important; }
+	      .small-box p  { color: #111111 !important; }
+	      /* Financial KPI 전용: 제목/값 모두 흰색, 제목을 위에 표시 */
+	      .small-box .fin-kpi-title {
+	        display: block;
+	        color: #ffffff !important;
+	        font-size: 12px;
+	        font-weight: 400;
+	        margin-bottom: 1px;
+	      }
+	      .small-box .fin-kpi-value {
+	        display: block;
+	        color: #ffffff !important;
+	        font-size: 26px;
+	        font-weight: 700;
+	        margin-top: 0;
+	      }
+	    ")),
 
     # tags$style(HTML(".fa-twitter { font-size: 10px; color:red;}")),
     # tags$style(HTML(".fa-facebook { font-size: 10px; color:red;}")),
@@ -374,28 +423,41 @@ body <- dashboardBody(
     # tags$style(HTML(".fa-linkedin { font-size: 10px; color:red;}")),
     # tags$style(HTML(".fa-tumblr { font-size: 10px; color:red;}")),
 
-    ## modify the dashboard's skin color
-    tags$style(HTML("
-                       /* logo */
-                       .skin-blue .main-header .logo {
-                       background-color: #006272;
-                       }
+	    ## modify the dashboard's skin color (palette 1)
+	    tags$style(HTML("
+	                       /* logo */
+	                       .skin-blue .main-header .logo {
+	                       background-color: #1F3A93;
+	                       }
 
-                       /* logo when hovered */
-                       .skin-blue .main-header .logo:hover {
-                       background-color: #006272;
-                       }
+	                       /* logo when hovered */
+	                       .skin-blue .main-header .logo:hover {
+	                       background-color: #1F3A93;
+	                       }
 
-                       /* navbar (rest of the header) */
-                       .skin-blue .main-header .navbar {
-                       background-color: #006272;
-                       }
+	                       /* navbar (rest of the header) */
+	                       .skin-blue .main-header .navbar {
+	                       background-color: #1F3A93;
+	                       }
 
-                       /* active selected tab in the sidebarmenu */
-                       .skin-blue .main-sidebar .sidebar .sidebar-menu .active a{
-                       background-color: #006272;
-                                 }
-                       ")),
+	                       /* active selected tab in the sidebarmenu */
+	                       .skin-blue .main-sidebar .sidebar .sidebar-menu .active a{
+	                       background-color: #1F3A93;
+	                                 }
+	                       ")),
+
+	    ## override valueBox background colors for palette 1
+	    tags$style(HTML("
+	      .bg-blue {
+	        background-color: #4A90E2 !important;
+	      }
+	      .bg-green {
+	        background-color: #27AE60 !important;
+	      }
+	      .bg-yellow {
+	        background-color: #F1C40F !important;
+	      }
+	    ")),
 
     ## modify icon size in the sub side bar menu
     tags$style(HTML("
@@ -495,34 +557,24 @@ body <- dashboardBody(
       ))
     ),
 
-    ## Financial benchmarking tab
-    tabItem(
-      tabName = "fin_bench",
-      fluidRow(
-        box(
-          width = 4, title = "설정", status = "primary", solidHeader = TRUE,
-          textInput("fin_corp_query", "상장사 검색", placeholder = "예: 한섬, 020000"),
-          actionButton("fin_corp_search", "검색"),
-          selectInput("fin_corp_pick", "상장사 선택", choices = c(), selected = NULL),
-          actionButton("fin_fetch_dart", "DART 불러오기"),
-          actionButton("fin_load_demo", "데모 데이터 로드"),
-          hr(),
-          fileInput("fin_upload", "내 가게 파일 업로드", accept = c(".xlsx", ".xls", ".csv")),
-          uiOutput("fin_mapping_ui"),
-          hr(),
-          numericInput("fin_forecast_y", "예측 연도 수", value = 3, min = 1, max = 5),
-          actionButton("fin_do_forecast", "예측 실행", class = "btn-primary")
-        ),
-        box(
-          width = 8, title = "분석 결과", status = "success", solidHeader = TRUE,
-          uiOutput("fin_kpi_row"),
-          plotlyOutput("fin_ts_plot"),
-          plotlyOutput("fin_quad_plot"),
-          plotlyOutput("fin_fc_plot"),
-          tableOutput("fin_fc_table")
-        )
-      )
-    ),
+	    ## Financial benchmarking tab
+	    tabItem(
+	      tabName = "fin_bench",
+	      h3("분석 결과"),
+	      fluidRow(
+	        box(
+	          width = 12, status = "success", solidHeader = FALSE,
+	          uiOutput("fin_kpi_row"),
+	          br(),
+	          textOutput("fin_summary"),
+	          br(),
+	          plotlyOutput("fin_ts_plot"),
+	          plotlyOutput("fin_quad_plot"),
+	          plotlyOutput("fin_fc_plot"),
+	          tableOutput("fin_fc_table")
+	        )
+	      )
+	    ),
 
     ## 3.2.1 Export/import commodities/services intelligence ------------------------
     tabItem(

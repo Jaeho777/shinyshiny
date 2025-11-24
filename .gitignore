@@ -6,3 +6,5 @@ rsconnect
 
 **/__pycache__
 **/venv
+.DS_Store
+nz-trade-dash/.env

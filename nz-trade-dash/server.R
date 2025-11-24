@@ -356,6 +356,16 @@ tmp_un_comtrade_max_year <- year(Sys.time()) - 2 # 2 years of lag
 ## build server.R
 server <- 
    function(input, output, session) {
+      ## Header navigation: icons controlling sidebar tab
+      observeEvent(input$go_dashboard, {
+         updateTabItems(session, "sidebar", "dashboard")
+      })
+      observeEvent(input$go_fin, {
+         updateTabItems(session, "sidebar", "fin_bench")
+      })
+      observeEvent(input$go_market, {
+         updateTabItems(session, "sidebar", "country_intel")
+      })
       ## I. Main dashboard -----------------------------
       i_prog <- 1
       tot_step <- 25
@@ -10489,7 +10499,7 @@ server <-
       ## --- show loading message when select a commodity -------
       observe(
          try(
-            if( !is.null(input$select_comodity_for_market_analysis) & 
+            if( !is.null(input$select_comodity_for_market_analysis) &&
                 input$select_comodity_for_market_analysis!= "" ){
                shinyjs::show( id = "ci_intel_hs_loading_message_intl" )
             }
@@ -11155,7 +11165,9 @@ server <-
       print("--------- Building Sankey data -------------")
 
       observe({
-         if(  input$rbtn_intel_by_hs == 'Exports' & !is.null(rv_intelHS$tmp_hs) ){
+         if( !is.null(input$rbtn_intel_by_hs) &&
+             input$rbtn_intel_by_hs == 'Exports' &&
+             !is.null(rv_intelHS$tmp_hs) ){
             ## check if able to get sankey data
             rv_intelHS$Fail_sankey_data <-
                try(
@@ -11966,9 +11978,16 @@ server <-
          latest_year <- max(df$year, na.rm = TRUE)
          latest <- df %>% filter(.data$year == latest_year)
          mk_box <- function(title, value, color = "primary") {
+            formatted <- scales::label_number(
+               scale_cut = scales::cut_short_scale()
+            )(value)
             valueBox(
-               value = scales::label_number(scale_cut = scales::cut_short_scale())(value),
-               subtitle = title,
+               value = HTML(sprintf(
+                  "<span class='fin-kpi-title'>%s</span><span class='fin-kpi-value'>%s</span>",
+                  title,
+                  formatted
+               )),
+               subtitle = NULL,
                color = color
             )
          }
@@ -11976,6 +11995,48 @@ server <-
             mk_box("최근 연도 매출", sum(latest$sales, na.rm = TRUE), "blue"),
             mk_box("재고자산회전율", mean(latest$inventory_turnover, na.rm = TRUE), "green"),
             mk_box("ROA", mean(latest$roa, na.rm = TRUE), "yellow")
+         )
+      })
+
+      output$fin_summary <- renderText({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+
+         sales <- sum(latest$sales, na.rm = TRUE)
+         it    <- mean(latest$inventory_turnover, na.rm = TRUE)
+         roa   <- mean(latest$roa, na.rm = TRUE)
+
+         sales_txt <- scales::label_number(scale_cut = scales::cut_short_scale())(sales)
+         it_txt    <- if (is.na(it)) "자료 부족" else paste0(round(it, 1), "배")
+         roa_txt   <- if (is.na(roa)) "자료 부족" else scales::percent(roa, accuracy = 0.1)
+
+         it_comment <- if (is.na(it)) {
+            ""
+         } else if (it < 2) {
+            "재고 회전이 다소 느린 편입니다. 재고 수준 점검이 필요해 보입니다."
+         } else if (it < 5) {
+            "재고 회전이 보통 수준입니다."
+         } else {
+            "재고 회전이 빠른 편으로, 재고 효율성이 높은 편입니다."
+         }
+
+         roa_comment <- if (is.na(roa)) {
+            ""
+         } else if (roa < 0.03) {
+            "ROA가 낮은 편이라 자산 대비 수익성이 아쉬운 수준입니다."
+         } else if (roa < 0.08) {
+            "ROA가 무난한 수준입니다."
+         } else {
+            "ROA가 높은 편이라 자산 활용이 효율적인 편입니다."
+         }
+
+         paste0(
+            latest_year, "년 기준 매출은 약 ", sales_txt,
+            "이고, 재고자산회전율은 ", it_txt,
+            ", ROA는 ", roa_txt, " 수준입니다. ",
+            it_comment, " ", roa_comment
          )
       })
 
