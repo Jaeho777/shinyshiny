@@ -874,38 +874,43 @@ get_snz_gs_country <- function( Exports_or_imports = 'Exports', selected_country
 
 
 ######## map heat map -----------------
-hc_add_series_treemap2 = with(environment(hc_add_series_treemap),
-                              ## Modified `hc_add_series_treemap`
-                              ## names colorValue correctly for connection to `hc_colorAxis`
-                              function (hc, tm, ...)
-                              {
-                                 assertthat::assert_that( is.highchart(hc),is.list(tm))
-                                 df <- tm$tm %>% tbl_df() %>% select_("-x0", "-y0", "-w", 
-                                                                      "-h", "-stdErr", "-vColorValue") %>% rename_(value = "vSize", 
-                                                                                                                   colorValue = "vColor") %>% purrr::map_if(is.factor, as.character) %>% 
-                                    data.frame(stringsAsFactors = FALSE) %>% tbl_df()
-                                 ndepth <- which(names(df) == "value") - 1
-                                 ds <- map_df(seq(ndepth), function(lvl) {
-                                    df2 <- df %>% filter_(sprintf("level == %s", lvl)) %>% 
-                                       rename_(name = names(df)[lvl]) %>% mutate_(id = "highcharter::str_to_id(name)")
-                                    if (lvl > 1) {
-                                       df2 <- df2 %>% mutate_(parent = names(df)[lvl - 1], 
-                                                              parent = "highcharter::str_to_id(parent)")
-                                    }
-                                    else {
-                                       df2 <- df2 %>% mutate_(parent = NA)
-                                    }
-                                    df2
-                                 })
-                                 ds <- list_parse(ds)
-                                 ds <- map(ds, function(x) {
-                                    if (is.na(x$parent)) 
-                                       x$parent <- NULL
-                                    x
-                                 })
-                                 hc %>% hc_add_series(data = ds, type = "treemap", ...)
-                              }
-)
+# compat helpers when highcharter doesn't expose hc_add_series_treemap
+if (!exists("hc_add_series_treemap")) {
+   hc_add_series_treemap <- function(hc, tm, ...) {
+      assertthat::assert_that(highcharter::is.highchart(hc), is.list(tm))
+      df <- tm$tm %>%
+         tibble::as_tibble() %>%
+         dplyr::select(-x0, -y0, -w, -h, -stdErr, -vColorValue) %>%
+         dplyr::rename(value = vSize, colorValue = vColor) %>%
+         dplyr::mutate(dplyr::across(where(is.factor), as.character))
+      ndepth <- which(names(df) == "value") - 1
+      ds <- purrr::map_df(seq(ndepth), function(lvl) {
+         df2 <- df %>%
+            dplyr::filter(level == lvl) %>%
+            dplyr::rename(name = !!names(df)[lvl]) %>%
+            dplyr::mutate(id = highcharter::str_to_id(name))
+         if (lvl > 1) {
+            df2 <- df2 %>%
+               dplyr::mutate(parent = !!rlang::sym(names(df)[lvl - 1])) %>%
+               dplyr::mutate(parent = highcharter::str_to_id(parent))
+         } else {
+            df2 <- df2 %>% dplyr::mutate(parent = NA_character_)
+         }
+         df2
+      })
+      ds_list <- highcharter::list_parse(purrr::map(ds, function(x) {
+         if (is.na(x$parent)) x$parent <- NULL
+         x
+      }))
+      hc %>% highcharter::hc_add_series(data = ds_list, type = "treemap", ...)
+   }
+}
+
+if (!exists("hc_add_series_treemap2")) {
+   hc_add_series_treemap2 <- function(hc, tm, ...) {
+      hc_add_series_treemap(hc, tm, ...)
+   }
+}
 
 ##### get investment country data ----------------
 sum_selected_country_investment <- function( arg_countries ){

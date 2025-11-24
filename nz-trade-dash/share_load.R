@@ -27,7 +27,8 @@ library(memoise)
 library(networkD3)
 library(promises)
 library(future)
-plan(multiprocess)
+# multiprocess deprecated in future >= 1.33; prefer multisession, fallback to sequential
+tryCatch(plan(multisession), error = function(e) plan(sequential))
 
 ### use memoise package for ct_search in comtradr ----
 m_ct_search <- memoise::memoise(ct_search)

@@ -9,9 +9,11 @@ library(xml2)
 library(plotly)
 library(prophet)
 library(janitor)
+library(jsonlite)
 library(stringr)
 library(scales)
 library(utils)
+library(zip)
 
 utils::globalVariables(c(
   "corp_name", "stock_code", "year", "sales", "inventory",
@@ -34,13 +36,42 @@ theme <- bs_theme(
 # Helper functions
 # ---------------------------
 load_api_key <- function() {
-  key <- Sys.getenv("DART_API_KEY")
+  read_env_key <- function(path) {
+    if (!file.exists(path)) return(NULL)
+    lines <- readLines(path, warn = FALSE)
+    lines <- trimws(lines)
+    lines <- lines[nzchar(lines) & !startsWith(lines, "#")]
+    if (length(lines) == 0) return(NULL)
+    kv <- strsplit(lines, "=", fixed = TRUE)
+    kv <- Filter(function(x) length(x) == 2, kv)
+    if (length(kv) == 0) return(NULL)
+    env_list <- setNames(trimws(vapply(kv, `[`, character(1), 2)), trimws(vapply(kv, `[`, character(1), 1)))
+    for (nm in c("DART_API_KEY", "DART_KEY", "DART_API")) {
+      if (!is.null(env_list[[nm]]) && nzchar(env_list[[nm]])) return(env_list[[nm]])
+    }
+    NULL
+  }
+
+  pick_env <- function() {
+    for (nm in c("DART_API_KEY", "DART_KEY", "DART_API")) {
+      val <- Sys.getenv(nm)
+      if (nzchar(val)) return(val)
+    }
+    NULL
+  }
+
+  key <- pick_env()
   if (nzchar(key)) return(key)
+
   if (requireNamespace("dotenv", quietly = TRUE)) {
     try(dotenv::load_dotenv(), silent = TRUE)
-    key <- Sys.getenv("DART_API_KEY")
+    key <- pick_env()
     if (nzchar(key)) return(key)
   }
+
+  # fallback: manual parse .env if dotenv 패키지 미설치/미로딩
+  key <- read_env_key(".env")
+  if (nzchar(key)) return(key)
   NULL
 }
 
@@ -55,9 +86,74 @@ http_get_with_retry <- function(url, params = list(), timeout = 40) {
   resp
 }
 
+safe_num <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NA_real_)
+  as.numeric(gsub("[^0-9\\.\\-]", "", x))
+}
+
+dart_single_acnt <- function(api_key, corp_code, year, reprt_code = "11014") {
+  url <- "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
+  resp <- http_get_with_retry(
+    url,
+    params = list(
+      crtfc_key = api_key,
+      corp_code = corp_code,
+      bsns_year = year,
+      reprt_code = reprt_code
+    ),
+    timeout = 40
+  )
+  txt <- content(resp, "text", encoding = "UTF-8")
+  js <- fromJSON(txt, simplifyVector = TRUE)
+  if (is.null(js$status) || js$status != "000") {
+    msg <- if (!is.null(js$message)) js$message else "DART 응답 오류"
+    stop(msg)
+  }
+  if (is.null(js$list) || length(js$list) == 0) stop("DART 응답에 계정 목록이 없습니다.")
+  as_tibble(js$list)
+}
+
+extract_accounts <- function(acct_tbl) {
+  if (is.null(acct_tbl) || nrow(acct_tbl) == 0) {
+    return(tibble(sales = NA_real_, inventory = NA_real_, net_income = NA_real_, total_assets = NA_real_, cogs = NA_real_))
+  }
+  pick_first <- function(names) {
+    hit <- acct_tbl %>% filter(.data$account_nm %in% names) %>% slice_head(n = 1)
+    if (nrow(hit) == 0) return(NA_real_)
+    safe_num(hit$thstrm_amount)
+  }
+  tibble(
+    sales = pick_first(c("매출액", "수익(매출액)", "수익")),
+    inventory = pick_first(c("재고자산")),
+    net_income = pick_first(c("당기순이익", "당기순이익(손실)")),
+    total_assets = pick_first(c("자산총계")),
+    cogs = pick_first(c("매출원가"))
+  )
+}
+
+fetch_dart_financials <- function(api_key, corp_code, corp_name, years) {
+  res <- map(years, function(y) {
+    tryCatch({
+      accts <- dart_single_acnt(api_key, corp_code, y)
+      vals <- extract_accounts(accts)
+      mutate(vals, year = y, source = corp_name)
+    }, error = function(e) {
+      NULL
+    })
+  })
+  res <- compact(res)
+  if (length(res) == 0) stop("DART 재무제표를 가져오지 못했습니다.")
+  bind_rows(res) %>%
+    select(.data$year, .data$sales, .data$inventory, .data$net_income, .data$total_assets, .data$cogs, .data$source)
+}
+
 fetch_corp_codes_cached <- function(api_key) {
   url <- "https://opendart.fss.or.kr/api/corpCode.xml"
   resp <- http_get_with_retry(url, params = list(crtfc_key = api_key))
+  ctype <- headers(resp)[["content-type"]]
+  if (!ctype %in% c("application/zip", "application/x-zip-compressed")) {
+    stop("DART API 응답이 ZIP 파일이 아닙니다. API KEY를 확인하세요.")
+  }
   tf <- tempfile(fileext = ".zip")
   writeBin(content(resp, "raw"), tf)
   xml_file <- NULL
@@ -80,13 +176,21 @@ fetch_corp_codes_cached <- function(api_key) {
   df
 }
 
-get_corp_codes <- function(api_key) {
-  if (file.exists("corp_codes.csv")) {
+find_corp_codes_path <- function() {
+  for (p in c("corp_codes.csv", file.path("nz-trade-dash", "corp_codes.csv"))) {
+    if (file.exists(p)) return(p)
+  }
+  NULL
+}
+
+get_corp_codes <- function(api_key, path = "corp_codes.csv") {
+  if (file.exists(path)) {
     try({
-      df <- read_csv("corp_codes.csv", show_col_types = FALSE)
+      df <- read_csv(path, show_col_types = FALSE, locale = locale(encoding = "UTF-8"))
       return(df %>% mutate(across(everything(), as.character)))
     }, silent = TRUE)
   }
+  if (!nzchar(api_key)) stop("API Key 없음")
   fetch_corp_codes_cached(api_key)
 }
 
@@ -116,6 +220,16 @@ alias_map <- c(
   "shinsegaeintl" = "신세계인터내셔날",
   "kolonindustries" = "코오롱인더스트리"
 )
+
+make_corp_choices <- function(df) {
+  if (is.null(df) || nrow(df) == 0) return(setNames(character(), character()))
+  labels <- ifelse(
+    !is.na(df$stock_code) & nzchar(df$stock_code),
+    paste0(df$corp_name, " (", df$stock_code, ")"),
+    df$corp_name
+  )
+  setNames(df$corp_code, labels)
+}
 
 search_corp_smart <- function(corp_df, query, limit = 30) {
   if (is.null(query) || query == "") return(head(corp_df, limit))
@@ -265,7 +379,6 @@ ui <- page_sidebar(
       uiOutput("kpi_row"),
       plotlyOutput("ts_plot")
     ),
-    nav_panel("요약", uiOutput("kpi_row"), plotlyOutput("ts_plot")),
     nav_panel("개요", plotlyOutput("ts_plot")),
     nav_panel("4분면", plotlyOutput("quad_plot")),
     nav_panel("예측", plotlyOutput("fc_plot"), tableOutput("fc_table"))
@@ -288,50 +401,133 @@ server <- function(input, output, session) {
 
   # 초기에는 데모 리스트로 설정
   observe({
-    if (is.null(values$corp_df)) values$corp_df <- demo_corp_codes()
+    if (is.null(values$corp_df)) {
+      corp_path <- find_corp_codes_path()
+      if (!is.null(corp_path)) {
+        values$corp_df <- tryCatch(
+          get_corp_codes("", corp_path),
+          error = function(e) {
+            showNotification("corp_codes.csv 읽기 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
+            demo_corp_codes()
+          }
+        )
+        values$corp_real_loaded <- TRUE
+      } else {
+        values$corp_df <- demo_corp_codes()
+      }
+    }
+  })
+
+  observeEvent(values$corp_df, {
+    df <- values$corp_df
+    if (is.null(df) || nrow(df) == 0) return()
+    choices <- make_corp_choices(head(df, 15))
+    updateSelectInput(session, "corp_pick", choices = choices, selected = choices[[1]])
   })
 
   # Search and pick corp
   observeEvent(input$corp_search, {
-    # 필요 시 실제 corpCode를 한번만 가져오기
-    if (!values$corp_real_loaded) {
-      api_key <- load_api_key()
-      if (!is.null(api_key)) {
-        withProgress(message = "DART 기업 리스트 불러오는 중...", value = 0.3, {
+    query <- if (is.null(input$corp_query)) "" else trimws(input$corp_query)
+    if (!nzchar(query)) {
+      showNotification("검색어를 입력하세요.", type = "warning", duration = 3)
+      return()
+    }
+
+    withProgress(message = "검색 중...", value = 0.1, {
+      # 필요 시 실제 corpCode를 한번만 가져오기
+      if (!values$corp_real_loaded) {
+        corp_path <- find_corp_codes_path()
+        if (!is.null(corp_path)) {
+          setProgress(0.2, detail = "로컬 corp_codes.csv 읽는 중")
           values$corp_df <- tryCatch(
-            get_corp_codes(api_key),
+            get_corp_codes("", corp_path),
             error = function(e) {
-              showNotification("DART corpCode 조회 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
+              showNotification("corp_codes.csv 읽기 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
               demo_corp_codes()
             }
           )
           values$corp_real_loaded <- TRUE
-        })
-      } else {
-        showNotification("DART_API_KEY가 없어 데모 리스트를 사용합니다.", type = "warning", duration = 5)
+        } else {
+          api_key <- load_api_key()
+          if (!is.null(api_key)) {
+            withProgress(message = "DART 기업 리스트 불러오는 중...", value = 0.3, {
+              values$corp_df <- tryCatch(
+                get_corp_codes(api_key),
+                error = function(e) {
+                  showNotification("DART corpCode 조회 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
+                  demo_corp_codes()
+                }
+              )
+              values$corp_real_loaded <- TRUE
+            })
+          } else {
+            showNotification("DART_API_KEY가 없어 데모 리스트를 사용합니다.", type = "warning", duration = 5)
+          }
+        }
       }
-    }
 
-    df <- values$corp_df
-    if (is.null(df) || nrow(df) == 0) {
-      showNotification("기업 리스트가 없습니다. 데모/키 설정을 확인하세요.", type = "error", duration = 5)
-      return()
-    }
-
-    hits <- search_corp_smart(df, input$corp_query)
-    if (nrow(hits) == 0) {
-      showNotification("검색 결과가 없습니다.", type = "warning", duration = 4)
-      return()
-    }
-    choices <- hits$corp_name
-    updateSelectInput(session, "corp_pick", choices = choices, selected = choices[[1]])
+      df <- values$corp_df
+      if (is.null(df) || nrow(df) == 0) {
+        showNotification("기업 리스트가 없습니다. 데모/키 설정을 확인하세요.", type = "error", duration = 5)
+        return()
+      }
+      setProgress(0.6, detail = "이름/종목코드 필터링 중")
+      hits <- search_corp_smart(df, query)
+      hits <- hits %>%
+        arrange(desc(!is.na(.data$stock_code) & nzchar(.data$stock_code)), .data$corp_name)
+      if (nrow(hits) == 0) {
+        showNotification("검색 결과가 없습니다.", type = "warning", duration = 4)
+        return()
+      }
+      choices <- make_corp_choices(hits)
+      updateSelectInput(session, "corp_pick", choices = choices, selected = choices[[1]])
+      showNotification(paste0("검색 결과 ", length(choices), "건을 찾았습니다."), type = "message", duration = 3)
+      setProgress(1)
+    })
   })
 
   # Fetch DART data (placeholder uses sample data)
   observeEvent(input$fetch_dart, {
-    corp_nm <- if (nzchar(input$corp_pick)) input$corp_pick else "상장사"
-    # TODO: 실제 DART 재무제표 호출 로직으로 교체
-    values$df_dart <- sample_dart_financials(corp_name = corp_nm)
+    selected_code <- if (!is.null(input$corp_pick) && nzchar(input$corp_pick)) input$corp_pick else NA_character_
+    if (is.na(selected_code)) {
+      showNotification("상장사를 먼저 선택하세요.", type = "warning", duration = 4)
+      return()
+    }
+    corp_nm <- "상장사"
+    if (!is.null(values$corp_df)) {
+      picked <- values$corp_df %>%
+        filter(.data$corp_code == selected_code | .data$corp_name == selected_code) %>%
+        slice_head(n = 1)
+      if (nrow(picked)) {
+        corp_nm <- picked$corp_name
+        selected_code <- picked$corp_code
+      }
+    }
+
+    api_key <- load_api_key()
+    if (is.null(api_key) || !nzchar(api_key)) {
+      showNotification("DART_API_KEY를 설정하세요. 데모 데이터를 사용합니다.", type = "warning", duration = 5)
+      values$df_dart <- sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
+      return()
+    }
+
+    years <- seq(as.integer(format(Sys.Date(), "%Y")) - 4, as.integer(format(Sys.Date(), "%Y")))
+    withProgress(message = paste0("DART 재무제표 불러오는 중: ", corp_nm), value = 0.2, {
+      df <- tryCatch(
+        fetch_dart_financials(api_key, selected_code, corp_nm, years),
+        error = function(e) {
+          showNotification(paste0("DART 불러오기 실패: ", e$message), type = "error", duration = 6)
+          NULL
+        }
+      )
+      if (is.null(df) || nrow(df) == 0) {
+        values$df_dart <- sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
+      } else {
+        values$df_dart <- df
+        showNotification("DART 데이터가 업데이트되었습니다.", type = "message", duration = 4)
+      }
+      setProgress(1)
+    })
   })
 
   # Load demo data for quick testing
@@ -415,7 +611,7 @@ server <- function(input, output, session) {
       )
     }
     layout_column_wrap(
-      width = 1/3,
+      width = 1 / 3,
       mk_card("최근 연도 매출", sum(latest$sales, na.rm = TRUE), "primary"),
       mk_card("재고자산회전율", mean(latest$inventory_turnover, na.rm = TRUE), "success"),
       mk_card("ROA", mean(latest$roa, na.rm = TRUE), "info")
@@ -452,8 +648,23 @@ server <- function(input, output, session) {
 
   # Forecast
   observeEvent(input$do_forecast, {
-    df <- combined_df()
-    validate(need(nrow(df) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
+    df_all <- combined_df()
+    validate(need(nrow(df_all) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
+
+    # Prophet은 중복된 날짜를 허용하지 않으므로 단일 소스만 선택
+    # 1순위: 선택한 상장사, 2순위: My Company, 3순위: 첫 번째 소스
+    chosen_source <- NULL
+    # 상장사(데모 포함) 우선
+    non_my <- df_all %>% filter(.data$source != "My Company")
+    if (nrow(non_my) > 0) chosen_source <- non_my$source[[1]]
+    # My Company만 있으면 그걸 사용
+    if (is.null(chosen_source) && any(df_all$source == "My Company")) chosen_source <- "My Company"
+    # 그래도 없으면 첫 source
+    if (is.null(chosen_source)) chosen_source <- df_all$source[[1]]
+
+    df <- df_all %>% filter(.data$source == chosen_source)
+    validate(need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
+
     fc <- safe_prophet(df, input$forecast_y)
     output$fc_table <- renderTable(fc)
     output$fc_plot <- renderPlotly({
