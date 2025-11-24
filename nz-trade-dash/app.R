@@ -43,13 +43,13 @@ load_api_key <- function() {
     lines <- trimws(lines)
     lines <- lines[nzchar(lines) & !startsWith(lines, "#")]
     if (length(lines) == 0) return(NULL)
-    kv <- strsplit(lines, "=", fixed = TRUE)
-    kv <- Filter(function(x) length(x) == 2, kv)
-    if (length(kv) == 0) return(NULL)
-    clean_val <- function(v) {
-      v <- trimws(v)
-      sub("^['\\\"](.*)['\\\"]$", "\\\\1", v)
-    }
+  kv <- strsplit(lines, "=", fixed = TRUE)
+  kv <- Filter(function(x) length(x) == 2, kv)
+  if (length(kv) == 0) return(NULL)
+  clean_val <- function(v) {
+    v <- trimws(v)
+    sub("^['\\\"](.*)['\\\"]$", "\\1", v)
+  }
     env_list <- setNames(
       vapply(kv, function(x) clean_val(x[[2]]), character(1)),
       trimws(vapply(kv, `[`, character(1), 1))

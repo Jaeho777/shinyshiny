@@ -70,7 +70,7 @@ fin_load_api_key <- function() {
       if (length(kv) == 0) return(NULL)
       clean_val <- function(v) {
          v <- trimws(v)
-         sub("^['\\\"](.*)['\\\"]$", "\\\\1", v)
+         sub("^['\\\"](.*)['\\\"]$", "\\1", v)
       }
       env_list <- setNames(
          vapply(kv, function(x) clean_val(x[[2]]), character(1)),
