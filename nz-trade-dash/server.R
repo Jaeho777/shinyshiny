@@ -11850,6 +11850,9 @@ server <-
             fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
             return()
          }
+         if (nrow(picked) && (is.na(picked$stock_code) || !nzchar(picked$stock_code))) {
+            showNotification("비상장/종목코드가 없는 기업입니다. DART 데이터가 없을 수 있습니다.", type = "warning", duration = 6)
+         }
          years <- seq(2015, as.integer(format(Sys.Date(), "%Y")))
       withProgress(message = paste0("DART 재무제표 불러오는 중: ", corp_nm), value = 0.2, {
             res <- tryCatch(
