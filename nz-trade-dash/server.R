@@ -184,10 +184,14 @@ fin_make_corp_choices <- function(df) {
    setNames(df$corp_code, labels)
 }
 
-fin_search_corp_smart <- function(corp_df, query, limit = 30) {
+fin_search_corp_smart <- function(corp_df, query, limit = 200) {
    if (is.null(query) || query == "") return(head(corp_df, limit))
    q <- trimws(query)
    if (!nzchar(q)) return(head(corp_df, limit))
+   if (str_detect(q, "^\\d{8}$")) {
+      hit <- corp_df %>% filter(.data$corp_code == q)
+      if (nrow(hit)) return(head(hit, limit))
+   }
    q_norm <- fin_norm_name(q)
    if (str_detect(q, "^\\d{6}$")) {
       hit <- corp_df %>% filter(.data$stock_code == q)
@@ -11709,21 +11713,42 @@ server <-
       fin_validate <- shiny::validate
       fin_need <- shiny::need
 
-      fin_ensure_corp_df <- function() {
-         if (!is.null(fin_values$corp_df) && nrow(fin_values$corp_df) > 0) return()
+      fin_ensure_corp_df <- function(force_reload = FALSE) {
+         if (!force_reload && !is.null(fin_values$corp_df) && nrow(fin_values$corp_df) > 0 && fin_values$corp_real_loaded) return()
          corp_path <- fin_find_corp_codes_path()
          if (!is.null(corp_path)) {
-            fin_values$corp_df <- tryCatch(
+            df <- tryCatch(
                fin_get_corp_codes("", corp_path),
                error = function(e) {
                   showNotification("corp_codes.csv 읽기 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
-                  fin_demo_corp_codes()
+                  NULL
                }
             )
-            fin_values$corp_real_loaded <- TRUE
-         } else {
-            fin_values$corp_df <- fin_demo_corp_codes()
+            if (!is.null(df)) {
+               fin_values$corp_df <- df
+               fin_values$corp_real_loaded <- TRUE
+               return()
+            }
          }
+         api_key <- fin_load_api_key()
+         if (!is.null(api_key) && nzchar(api_key)) {
+            df <- tryCatch(
+               fin_get_corp_codes(api_key),
+               error = function(e) {
+                  showNotification("DART corpCode 조회 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
+                  NULL
+               }
+            )
+            if (!is.null(df)) {
+               fin_values$corp_df <- df
+               fin_values$corp_real_loaded <- TRUE
+               return()
+            }
+         } else if (is.null(corp_path)) {
+            showNotification("DART_API_KEY가 없어 corp_codes.csv를 불러오지 못했습니다. 데모 리스트로 대체합니다.", type = "warning", duration = 5)
+         }
+         fin_values$corp_df <- fin_demo_corp_codes()
+         fin_values$corp_real_loaded <- FALSE
       }
 
       # 기본적으로 데모 데이터를 미리 채워서 화면이 비어 보이지 않도록 함
@@ -11753,20 +11778,8 @@ server <-
       }
 
       observe({
-         if (is.null(fin_values$corp_df)) {
-            corp_path <- fin_find_corp_codes_path()
-            if (!is.null(corp_path)) {
-               fin_values$corp_df <- tryCatch(
-                  fin_get_corp_codes("", corp_path),
-                  error = function(e) {
-                     showNotification("corp_codes.csv 읽기 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
-                     fin_demo_corp_codes()
-                  }
-               )
-               fin_values$corp_real_loaded <- TRUE
-            } else {
-               fin_values$corp_df <- fin_demo_corp_codes()
-            }
+         if (is.null(fin_values$corp_df) || !fin_values$corp_real_loaded) {
+            fin_ensure_corp_df(force_reload = TRUE)
          }
       })
 
@@ -11778,7 +11791,7 @@ server <-
       })
 
       observeEvent(input$fin_corp_search, {
-         fin_ensure_corp_df()
+         fin_ensure_corp_df(force_reload = !fin_values$corp_real_loaded)
          query <- if (is.null(input$fin_corp_query)) "" else trimws(input$fin_corp_query)
          if (!nzchar(query)) {
             showNotification("검색어를 입력하세요.", type = "warning", duration = 3)
@@ -11790,34 +11803,8 @@ server <-
          }
          withProgress(message = "검색 중...", value = 0.1, {
             if (!fin_values$corp_real_loaded) {
-               corp_path <- fin_find_corp_codes_path()
-               if (!is.null(corp_path)) {
-                  setProgress(0.2, detail = "로컬 corp_codes.csv 읽는 중")
-                  fin_values$corp_df <- tryCatch(
-                     fin_get_corp_codes("", corp_path),
-                     error = function(e) {
-                        showNotification("corp_codes.csv 읽기 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
-                        fin_demo_corp_codes()
-                     }
-                  )
-                  fin_values$corp_real_loaded <- TRUE
-               } else {
-                  api_key <- fin_load_api_key()
-                  if (!is.null(api_key)) {
-                     withProgress(message = "DART 기업 리스트 불러오는 중...", value = 0.3, {
-                        fin_values$corp_df <- tryCatch(
-                           fin_get_corp_codes(api_key),
-                           error = function(e) {
-                              showNotification("DART corpCode 조회 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
-                              fin_demo_corp_codes()
-                           }
-                        )
-                        fin_values$corp_real_loaded <- TRUE
-                     })
-                  } else {
-                     showNotification("DART_API_KEY가 없어 데모 리스트를 사용합니다.", type = "warning", duration = 5)
-                  }
-               }
+               setProgress(0.25, detail = "기업 리스트를 새로 불러오는 중")
+               fin_ensure_corp_df(force_reload = TRUE)
             }
             df <- fin_values$corp_df
             if (is.null(df) || nrow(df) == 0) {
@@ -11825,7 +11812,7 @@ server <-
                return()
             }
             setProgress(0.6, detail = "이름/종목코드 필터링 중")
-            hits <- fin_search_corp_smart(df, query)
+            hits <- fin_search_corp_smart(df, query, limit = 200)
             hits <- hits %>%
                arrange(desc(!is.na(.data$stock_code) & nzchar(.data$stock_code)), .data$corp_name)
             if (nrow(hits) == 0) {
