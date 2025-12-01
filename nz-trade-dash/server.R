@@ -12029,6 +12029,11 @@ server <-
          res
       })
 
+      pred_focus_source <- reactive({
+         res <- fin_forecast_result()
+         if (!is.null(res$source)) res$source else "선택된 소스"
+      })
+
       output$fin_kpi_row <- renderUI({
          df <- fin_combined_df()
          fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
@@ -12406,6 +12411,73 @@ server <-
          HTML(paste0("<p><strong>위험 신호:</strong></p><ul>", paste(sprintf("<li>%s</li>", alerts), collapse = ""), "</ul>"))
       })
 
+      output$analysis_delta_note <- renderText({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         others <- df %>% filter(.data$source != focus)
+         me <- df %>% filter(.data$source == focus)
+         if (nrow(others) == 0 || nrow(me) == 0) return("비교 대상이 없습니다.")
+         latest_year <- max(me$year, na.rm = TRUE)
+         me_latest <- me %>% filter(.data$year == latest_year)
+         others_latest <- others %>% filter(.data$year == latest_year)
+         if (nrow(others_latest) == 0) return("동일 연도 비교 대상 없음.")
+         me_it <- mean(me_latest$inventory_turnover, na.rm = TRUE)
+         peer_it <- mean(others_latest$inventory_turnover, na.rm = TRUE)
+         delta <- me_it - peer_it
+         if (is.na(delta)) return("재고회전율 비교 불가.")
+         dir <- if (delta > 0) "높습니다" else "낮습니다"
+         paste0("재고회전율이 경쟁사 평균보다 ", abs(round(delta, 2)), "배 ", dir, ".")
+      })
+
+      output$analysis_insight_main <- renderValueBox({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         fin_validate(fin_need(!is.null(focus), "소스를 선택하세요."))
+         latest_year <- max(df$year, na.rm = TRUE)
+         me <- df %>% filter(.data$source == focus, .data$year == latest_year)
+         sales <- sum(me$sales, na.rm = TRUE) / 1e8
+         valueBox(
+            value = paste0(round(sales, 1), " 억"),
+            subtitle = paste0(latest_year, "년 ", focus, " 매출"),
+            color = "blue"
+         )
+      })
+
+      output$analysis_warning <- renderValueBox({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         fin_validate(fin_need(!is.null(focus), "소스를 선택하세요."))
+         latest_year <- max(df$year, na.rm = TRUE)
+         me <- df %>% filter(.data$source == focus, .data$year == latest_year)
+         inv_turn <- mean(me$inventory_turnover, na.rm = TRUE)
+         roa <- mean(me$roa, na.rm = TRUE)
+         warn <- if (!is.na(inv_turn) && inv_turn < 2) "재고 회전 저조" else if (!is.na(roa) && roa < 0.03) "ROA 낮음" else "주의 없음"
+         valueBox(
+            value = warn,
+            subtitle = "위험 신호",
+            color = if (warn == "주의 없음") "green" else "yellow"
+         )
+      })
+
+      output$analysis_action <- renderValueBox({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         fin_validate(fin_need(!is.null(focus), "소스를 선택하세요."))
+         latest_year <- max(df$year, na.rm = TRUE)
+         me <- df %>% filter(.data$source == focus, .data$year == latest_year)
+         inv_turn <- mean(me$inventory_turnover, na.rm = TRUE)
+         action <- if (!is.na(inv_turn) && inv_turn < 2) {
+            "재고 축소/셀다운"
+         } else {
+            "성장 채널 투자"
+         }
+         valueBox(
+            value = action,
+            subtitle = "추천 액션",
+            color = "purple"
+         )
+      })
+
       output$pred_ts_plot <- renderPlotly({
          res <- fin_forecast_result()
          df_all <- fin_combined_df()
@@ -12474,6 +12546,11 @@ server <-
             )
       })
 
+      output$pred_comp_note <- renderText({
+         src <- pred_focus_source()
+         paste0("트렌드/컴포넌트는 '", src, "' 예측 기준입니다. (My Company 데이터가 있으면 우선 사용)")
+      })
+
       output$pred_fc_error_plot <- renderPlotly({
          res <- fin_forecast_result()
          fitted <- res$fitted
@@ -12489,6 +12566,11 @@ server <-
             )
       })
 
+      output$pred_resid_note <- renderText({
+         src <- pred_focus_source()
+         paste0("잔차/불확실성 역시 '", src, "' 예측을 기반으로 합니다. 다른 소스 잔차는 별도 계산되지 않습니다.")
+      })
+
       output$pred_quality <- renderUI({
          res <- fin_forecast_result()
          hist_years <- range(res$history$year, na.rm = TRUE)
@@ -12498,6 +12580,61 @@ server <-
          core <- paste0("학습 구간: ", hist_years[1], " ~ ", hist_years[2], ", 예측: ", res$horizon, "년")
          if (length(msgs) == 0) return(HTML(paste0("<p><strong>예측 데이터:</strong> ", core, "</p>")))
          HTML(paste0("<p><strong>예측 데이터 경고:</strong> ", core, "</p><ul>", paste(sprintf("<li>%s</li>", msgs), collapse = ""), "</ul>"))
+      })
+
+      output$pred_insight_main <- renderValueBox({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
+         latest <- fc %>% slice_tail(n = 1)
+         valueBox(
+            value = paste0(round(latest$yhat / 1e8, 1), " 억"),
+            subtitle = paste0(latest$year, "년 예상 매출"),
+            color = "blue"
+         )
+      })
+
+      output$pred_warning <- renderValueBox({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (fc$yhat[1] - hist_last$sales) / hist_last$sales
+         } else NA_real_
+         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         warn <- if (!is.na(growth) && growth < -0.05) {
+            "매출 감소 우려"
+         } else if (!is.na(band_ratio) && band_ratio > 0.4) {
+            "불확실성 높음"
+         } else {
+            "주의 없음"
+         }
+         valueBox(
+            value = warn,
+            subtitle = "예측 신호",
+            color = if (warn == "주의 없음") "green" else "yellow"
+         )
+      })
+
+      output$pred_action_box <- renderValueBox({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (fc$yhat[1] - hist_last$sales) / hist_last$sales
+         } else NA_real_
+         action <- if (!is.na(growth) && growth < -0.05) {
+            "재고·비용 축소"
+         } else if (!is.na(growth) && growth > 0.1) {
+            "재고 선제 확보"
+         } else {
+            "보합: 재고 점검"
+         }
+         valueBox(
+            value = action,
+            subtitle = "추천 액션",
+            color = "purple"
+         )
       })
 
       output$pred_accuracy <- renderTable({

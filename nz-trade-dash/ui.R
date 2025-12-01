@@ -586,6 +586,11 @@ body <- dashboardBody(
       tabName = "analysis_graph",
       h3("경쟁사/비교 기업 분석"),
       fluidRow(
+        valueBoxOutput("analysis_insight_main", width = 4),
+        valueBoxOutput("analysis_warning", width = 4),
+        valueBoxOutput("analysis_action", width = 4)
+      ),
+      fluidRow(
         box(
           title = "데이터 상태 & 경보",
           width = 4,
@@ -602,7 +607,8 @@ body <- dashboardBody(
           status = "primary",
           solidHeader = TRUE,
           uiOutput("analysis_kpi_row"),
-          plotlyOutput("analysis_plot_1")
+          plotlyOutput("analysis_plot_1"),
+          div(class = "viz-text-lg", textOutput("analysis_delta_note"))
         )
       ),
       fluidRow(
@@ -628,6 +634,11 @@ body <- dashboardBody(
     tabItem(
       tabName = "prediction_graph",
       h3("재고/매출 예측 결과 (Prophet)"),
+      fluidRow(
+        valueBoxOutput("pred_insight_main", width = 4),
+        valueBoxOutput("pred_warning", width = 4),
+        valueBoxOutput("pred_action_box", width = 4)
+      ),
       fluidRow(
         box(
           title = "예측 시계열",
@@ -656,14 +667,16 @@ body <- dashboardBody(
           width = 6,
           status = "info",
           solidHeader = TRUE,
-          plotlyOutput("pred_comp_plot")
+          plotlyOutput("pred_comp_plot"),
+          div(class = "viz-text-lg", textOutput("pred_comp_note"))
         ),
         box(
           title = "잔차 & 불확실성",
           width = 6,
           status = "success",
           solidHeader = TRUE,
-          plotlyOutput("pred_fc_error_plot")
+          plotlyOutput("pred_fc_error_plot"),
+          div(class = "viz-text-lg", textOutput("pred_resid_note"))
         )
       )
     ),
