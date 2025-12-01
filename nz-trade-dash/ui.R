@@ -142,11 +142,13 @@ siderbar <-
 
 	      ## Financial benchmarking tab
 	      menuItem("Financial Benchmarking", tabName = "fin_bench", icon = icon("chart-line")),
+	      menuItem("분석 탭", tabName = "analysis_graph", icon = icon("bar-chart")),
+	      menuItem("예측 탭", tabName = "prediction_graph", icon = icon("line-chart")),
 	      ## Financial benchmarking settings panel (inline, like Market Intelligence)
 	      div(
 	        id = "sidebar_fin_bench",
 	        conditionalPanel(
-	          "input.sidebar === 'fin_bench'",
+	          "input.sidebar === 'fin_bench' || input.sidebar === 'analysis_graph' || input.sidebar === 'prediction_graph'",
 	          tags$hr(),
 	          h4("설정"),
 	          textInput("fin_corp_query", "상장사 검색", placeholder = "예: 한섬, 020000"),
@@ -575,6 +577,44 @@ body <- dashboardBody(
 	        )
 	      )
 	    ),
+
+    tabItem(
+      tabName = "analysis_graph",
+      h3("경쟁사/비교 기업 분석"),
+      fluidRow(
+        box(
+          title = "경쟁사/비교 기업 분석",
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("analysis_plot_1"),
+          plotlyOutput("analysis_plot_2"),
+          plotlyOutput("analysis_plot_3"),
+          textOutput("analysis_desc_1"),
+          textOutput("analysis_desc_2"),
+          textOutput("analysis_desc_3")
+        )
+      )
+    ),
+
+    tabItem(
+      tabName = "prediction_graph",
+      h3("재고/매출 예측 결과 (Prophet)"),
+      fluidRow(
+        box(
+          title = "재고/매출 예측 결과 (Prophet)",
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_ts_plot"),
+          plotlyOutput("pred_comp_plot"),
+          plotlyOutput("pred_fc_error_plot"),
+          textOutput("pred_summary"),
+          textOutput("pred_detail_1"),
+          textOutput("pred_detail_2")
+        )
+      )
+    ),
 
     ## 3.2.1 Export/import commodities/services intelligence ------------------------
     tabItem(

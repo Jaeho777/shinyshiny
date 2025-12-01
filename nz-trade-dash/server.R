@@ -343,14 +343,46 @@ fin_sample_my_company <- function(years = 2019:2023) {
    )
 }
 
-fin_safe_prophet <- function(df, horizon) {
+fin_pick_source <- function(df_all) {
+   if (is.null(df_all) || nrow(df_all) == 0 || !"source" %in% names(df_all)) return(NULL)
+   non_my <- df_all %>% filter(.data$source != "My Company")
+   if (nrow(non_my) > 0) return(non_my$source[[1]])
+   my_rows <- df_all %>% filter(.data$source == "My Company")
+   if (nrow(my_rows) > 0) return("My Company")
+   df_all$source[[1]]
+}
+
+fin_safe_prophet <- function(df, horizon, source_name = NULL) {
    req(nrow(df) > 2)
+   horizon <- max(1L, as.integer(horizon))
+   src <- if (!is.null(source_name)) {
+      source_name
+   } else if ("source" %in% names(df) && length(df$source)) {
+      df$source[[1]]
+   } else {
+      "Series"
+   }
+   df <- df %>% arrange(.data$year)
    m <- prophet(df %>% transmute(ds = as.Date(paste0(.data$year, "-12-31")), y = .data$sales))
    future <- make_future_dataframe(m, periods = horizon, freq = "year")
-   preds <- predict(m, future) %>%
-      transmute(year = as.integer(format(.data$ds, "%Y")), yhat = .data$yhat)
+   preds <- predict(m, future) %>% mutate(year = as.integer(format(.data$ds, "%Y")))
    last_year <- max(df$year, na.rm = TRUE)
-   preds %>% filter(.data$year > last_year)
+   forecast <- preds %>% filter(.data$year > last_year)
+   fitted <- preds %>%
+      filter(.data$year <= last_year) %>%
+      select(.data$year, .data$yhat, .data$yhat_lower, .data$yhat_upper) %>%
+      left_join(df %>% select(.data$year, sales), by = "year") %>%
+      rename(actual = .data$sales) %>%
+      mutate(resid = .data$actual - .data$yhat)
+   list(
+      source = src,
+      model = m,
+      forecast = forecast %>% select(.data$year, .data$yhat, .data$yhat_lower, .data$yhat_upper, .data$trend),
+      fitted = fitted,
+      full = preds %>% select(.data$year, .data$ds, .data$yhat, .data$yhat_lower, .data$yhat_upper, .data$trend),
+      history = df,
+      horizon = horizon
+   )
 }
 
 ## 000 user input setup. Please pay close attention and change -----
@@ -11707,6 +11739,7 @@ server <-
          df_dart = NULL,
          df_my = NULL,
          df_my_norm = NULL,
+         fc_result = NULL,
          corp_real_loaded = FALSE
       )
 
@@ -11756,6 +11789,7 @@ server <-
          if (is.null(fin_values$df_dart) && is.null(fin_values$df_my_norm)) {
             fin_values$df_dart <- fin_sample_dart_financials(corp_name = "상장사(데모)")
             fin_values$df_my_norm <- fin_sample_my_company()
+            fin_values$fc_result <- NULL
          }
       }, once = TRUE)
 
@@ -11848,6 +11882,7 @@ server <-
          if (is.null(api_key) || !nzchar(api_key)) {
             showNotification("DART_API_KEY를 설정하세요. 데모 데이터를 사용합니다.", type = "warning", duration = 5)
             fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
+            fin_values$fc_result <- NULL
             return()
          }
          if (nrow(picked) && (is.na(picked$stock_code) || !nzchar(picked$stock_code))) {
@@ -11866,6 +11901,7 @@ server <-
             status <- if (!is.null(res)) res$status else NULL
             if (is.null(df) || nrow(df) == 0) {
                fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
+               fin_values$fc_result <- NULL
                detail <- if (!is.null(status)) {
                   fails <- status %>% filter(!.data$ok)
                   msgs <- unique(fails$message)
@@ -11878,6 +11914,7 @@ server <-
                showNotification(msg, type = "warning", duration = 6)
             } else {
                fin_values$df_dart <- df
+               fin_values$fc_result <- NULL
                dropped <- NULL
                drop_msgs <- NULL
                if (!is.null(status)) {
@@ -11901,6 +11938,7 @@ server <-
       observeEvent(input$fin_load_demo, {
          fin_values$df_dart <- fin_sample_dart_financials(corp_name = "상장사(데모)")
          fin_values$df_my_norm <- fin_sample_my_company()
+         fin_values$fc_result <- NULL
          showNotification("데모 데이터가 로드되었습니다.", type = "message", duration = 4)
       })
 
@@ -11922,6 +11960,7 @@ server <-
             )
          })
          fin_values$df_my <- df
+         fin_values$fc_result <- NULL
       })
 
       observeEvent(list(input$fin_col_year, input$fin_col_sales, input$fin_col_inventory,
@@ -11940,6 +11979,7 @@ server <-
          ) %>%
             mutate(year = as.integer(.data$year))
          fin_values$df_my_norm <- res
+         fin_values$fc_result <- NULL
       }, ignoreNULL = FALSE)
 
       fin_combined_df <- reactive({
@@ -11960,6 +12000,30 @@ server <-
                inventory_turnover = if_else(!is.na(.data$cogs) & !is.na(.data$inventory) & .data$inventory != 0, .data$cogs / .data$inventory, NA_real_),
                roa = if_else(!is.na(.data$net_income) & !is.na(.data$total_assets) & .data$total_assets != 0, .data$net_income / .data$total_assets, NA_real_)
             )
+      })
+
+      observeEvent(fin_combined_df(), {
+         df_all <- fin_combined_df()
+         if (is.null(df_all) || nrow(df_all) < 3) return()
+         chosen_source <- fin_pick_source(df_all)
+         if (is.null(chosen_source)) return()
+         df <- df_all %>% filter(.data$source == chosen_source)
+         if (nrow(df) < 3) return()
+         if (is.null(fin_values$fc_result)) {
+            horizon <- if (!is.null(input$fin_forecast_y)) {
+               max(1L, min(5L, as.integer(input$fin_forecast_y)))
+            } else {
+               3L
+            }
+            fin_values$fc_result <- fin_safe_prophet(df, horizon, source_name = chosen_source)
+         }
+      })
+
+      fin_forecast_result <- reactive({
+         res <- fin_values$fc_result
+         fin_validate(fin_need(!is.null(res) && !is.null(res$forecast) && nrow(res$forecast) > 0,
+                               "예측 결과가 없습니다. '예측 실행'을 눌러주세요."))
+         res
       })
 
       output$fin_kpi_row <- renderUI({
@@ -12056,14 +12120,64 @@ server <-
             )
       })
 
+      output$fin_fc_table <- renderTable({
+         res <- fin_forecast_result()
+         res$forecast
+      })
+
+      output$fin_fc_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         df_all <- fin_combined_df()
+         fin_validate(fin_need(nrow(df_all) > 0, "데이터를 불러오세요"))
+         src <- if (!is.null(res$source)) res$source else fin_pick_source(df_all)
+         actual <- df_all %>%
+            filter(.data$source == src) %>%
+            arrange(.data$year) %>%
+            transmute(year, value = sales)
+         fin_validate(fin_need(nrow(actual) > 0, "예측을 위한 실측값이 없습니다."))
+         fc <- res$forecast
+         last_year <- max(actual$year, na.rm = TRUE)
+         y_min <- min(c(actual$value, fc$yhat_lower), na.rm = TRUE)
+         y_max <- max(c(actual$value, fc$yhat_upper), na.rm = TRUE)
+         plot_ly() %>%
+            add_trace(
+               data = actual, x = ~year, y = ~value,
+               type = "scatter", mode = "lines+markers",
+               name = paste0(src, " 실제")
+            ) %>%
+            add_trace(
+               data = fc, x = ~year, y = ~yhat,
+               type = "scatter", mode = "lines+markers",
+               name = paste0(src, " 예측")
+            ) %>%
+            add_ribbons(
+               data = fc, x = ~year, ymin = ~yhat_lower, ymax = ~yhat_upper,
+               name = "예측 구간",
+               fillcolor = "rgba(68, 114, 196, 0.2)",
+               line = list(color = "transparent")
+            ) %>%
+            layout(
+               yaxis = list(title = "매출액"),
+               xaxis = list(title = "연도"),
+               shapes = list(list(
+                  type = "line", x0 = last_year, x1 = last_year,
+                  y0 = y_min, y1 = y_max,
+                  xref = "x", yref = "y",
+                  line = list(dash = "dash", color = "gray")
+               )),
+               annotations = list(list(
+                  x = last_year, y = y_max,
+                  text = "예측 시작",
+                  showarrow = TRUE, arrowhead = 2, ax = 20, ay = -40,
+                  bgcolor = "white"
+               ))
+            )
+      })
+
       observeEvent(input$fin_do_forecast, {
          df_all <- fin_combined_df()
          fin_validate(fin_need(nrow(df_all) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
-         chosen_source <- NULL
-         non_my <- df_all %>% filter(.data$source != "My Company")
-         if (nrow(non_my) > 0) chosen_source <- non_my$source[[1]]
-         if (is.null(chosen_source) && any(df_all$source == "My Company")) chosen_source <- "My Company"
-         if (is.null(chosen_source)) chosen_source <- df_all$source[[1]]
+         chosen_source <- fin_pick_source(df_all)
          df <- df_all %>% filter(.data$source == chosen_source)
          fin_validate(fin_need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
          last_year <- max(df$year, na.rm = TRUE)
@@ -12072,37 +12186,204 @@ server <-
             showNotification("최근 연도가 2030 이상이라 예측이 없습니다.", type = "warning", duration = 5)
             return()
          }
-         fc <- fin_safe_prophet(df, horizon)
-         output$fin_fc_table <- renderTable(fc)
-         output$fin_fc_plot <- renderPlotly({
-            combined <- bind_rows(
-               df %>% transmute(year, value = sales),
-               fc %>% transmute(year, value = yhat)
-            ) %>% arrange(year)
-            last_year <- max(df$year, na.rm = TRUE)
-            plot_ly(
-               data = combined,
-               x = ~year, y = ~value,
-               type = "scatter", mode = "lines+markers",
-               name = "매출(실제+예측)"
+         fin_values$fc_result <- fin_safe_prophet(df, horizon, source_name = chosen_source)
+         showNotification("예측이 업데이트되었습니다.", type = "message", duration = 4)
+      })
+
+      analysis_df <- reactive({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         df
+      })
+
+      output$analysis_plot_1 <- renderPlotly({
+         df <- analysis_df()
+         plot_ly(df, x = ~year, y = ~sales, color = ~source, type = "scatter", mode = "lines+markers") %>%
+            layout(
+               yaxis = list(title = "매출액"),
+               xaxis = list(title = "연도")
+            )
+      })
+
+      output$analysis_plot_2 <- renderPlotly({
+         df <- analysis_df() %>%
+            group_by(.data$source) %>%
+            summarize(
+               inventory_turnover = mean(.data$inventory_turnover, na.rm = TRUE),
+               roa = mean(.data$roa, na.rm = TRUE),
+               .groups = "drop"
             ) %>%
-               layout(
-                  yaxis = list(title = "매출액"),
-                  shapes = list(list(
-                     type = "line", x0 = last_year, x1 = last_year,
-                     y0 = min(combined$value, na.rm = TRUE),
-                     y1 = max(combined$value, na.rm = TRUE),
-                     xref = "x", yref = "y",
-                     line = list(dash = "dash", color = "gray")
-                  )),
-                  annotations = list(list(
-                     x = last_year, y = max(combined$value, na.rm = TRUE),
-                     text = "예측 시작",
-                     showarrow = TRUE, arrowhead = 2, ax = 20, ay = -40,
-                     bgcolor = "white"
-                  ))
-               )
-         })
+            pivot_longer(c("inventory_turnover", "roa"), names_to = "metric", values_to = "value")
+         fin_validate(fin_need(nrow(df) > 0, "지표를 계산할 수 없습니다."))
+         plot_ly(df, x = ~source, y = ~value, color = ~metric, type = "bar", barmode = "group") %>%
+            layout(
+               yaxis = list(title = "평균 값"),
+               xaxis = list(title = "기업/소스"),
+               legend = list(orientation = "h", x = 0, y = 1.1)
+            )
+      })
+
+      output$analysis_plot_3 <- renderPlotly({
+         df <- analysis_df() %>%
+            mutate(
+               profit_margin = if_else(.data$sales != 0, .data$net_income / .data$sales, NA_real_),
+               inventory_ratio = if_else(.data$sales != 0, .data$inventory / .data$sales, NA_real_)
+            )
+         fin_validate(fin_need(sum(!is.na(df$inventory_ratio) & !is.na(df$profit_margin)) > 0, "비교 지표가 부족합니다. 업로드/선택 데이터를 확인하세요."))
+         x_limit <- if (all(is.na(df$inventory_ratio))) 1 else max(df$inventory_ratio, na.rm = TRUE)
+         plot_ly(df, x = ~inventory_ratio, y = ~profit_margin, color = ~source, type = "scatter", mode = "markers",
+                 text = ~paste0(source, " / ", year)) %>%
+            layout(
+               xaxis = list(title = "재고 비율"),
+               yaxis = list(title = "이익률"),
+               shapes = list(list(type = "line", x0 = 0, x1 = x_limit,
+                                  y0 = 0, y1 = 0, xref = "x", yref = "y",
+                                  line = list(color = "gray", dash = "dot")))
+            )
+      })
+
+      output$analysis_desc_1 <- renderText({
+         df <- analysis_df()
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         by_source <- latest %>%
+            group_by(.data$source) %>%
+            summarize(sales = sum(.data$sales, na.rm = TRUE), .groups = "drop") %>%
+            arrange(desc(.data$sales))
+         fin_validate(fin_need(nrow(by_source) > 0, "매출 비교를 위한 데이터가 없습니다."))
+         leader <- by_source %>% slice_head(n = 1)
+         sales_txt <- scales::label_number(scale_cut = scales::cut_short_scale())(leader$sales)
+         paste0(latest_year, "년 매출 규모는 ", leader$source, "이(가) 약 ", sales_txt, "로 가장 큽니다.")
+      })
+
+      output$analysis_desc_2 <- renderText({
+         df <- analysis_df() %>%
+            group_by(.data$source) %>%
+            summarize(
+               it = mean(.data$inventory_turnover, na.rm = TRUE),
+               roa = mean(.data$roa, na.rm = TRUE),
+               .groups = "drop"
+            )
+         best_it <- df %>% filter(!is.na(.data$it)) %>% arrange(desc(.data$it)) %>% slice_head(n = 1)
+         best_roa <- df %>% filter(!is.na(.data$roa)) %>% arrange(desc(.data$roa)) %>% slice_head(n = 1)
+         parts <- c()
+         if (nrow(best_it)) parts <- c(parts, paste0("재고회전율은 ", best_it$source, "가 ", round(best_it$it, 2), "배로 가장 효율적입니다."))
+         if (nrow(best_roa)) parts <- c(parts, paste0("ROA는 ", best_roa$source, "가 ", scales::percent(best_roa$roa, accuracy = 0.1), "로 가장 높습니다."))
+         if (length(parts) == 0) return("효율성 비교를 위한 지표가 부족합니다.")
+         paste(parts, collapse = " ")
+      })
+
+      output$analysis_desc_3 <- renderText({
+         df <- analysis_df() %>%
+            mutate(
+               profit_margin = if_else(.data$sales != 0, .data$net_income / .data$sales, NA_real_),
+               inventory_ratio = if_else(.data$sales != 0, .data$inventory / .data$sales, NA_real_)
+            ) %>%
+            group_by(.data$source) %>%
+            summarize(
+               margin = mean(.data$profit_margin, na.rm = TRUE),
+               inv_ratio = mean(.data$inventory_ratio, na.rm = TRUE),
+               .groups = "drop"
+            )
+         leader <- df %>% filter(!is.na(.data$margin)) %>% arrange(desc(.data$margin)) %>% slice_head(n = 1)
+         heavy_inv <- df %>% filter(!is.na(.data$inv_ratio)) %>% arrange(desc(.data$inv_ratio)) %>% slice_head(n = 1)
+         msg <- character()
+         if (nrow(leader)) msg <- c(msg, paste0("이익률은 ", leader$source, "가 상대적으로 우수합니다."))
+         if (nrow(heavy_inv)) msg <- c(msg, paste0("재고 비중은 ", heavy_inv$source, "가 높아 관리가 필요합니다."))
+         if (length(msg) == 0) return("이익률/재고 구조를 비교할 데이터가 부족합니다.")
+         paste(msg, collapse = " ")
+      })
+
+      output$pred_ts_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         df_all <- fin_combined_df()
+         fin_validate(fin_need(nrow(df_all) > 0, "데이터를 불러오세요"))
+         src <- if (!is.null(res$source)) res$source else fin_pick_source(df_all)
+         actual <- df_all %>% filter(.data$source == src) %>% arrange(.data$year)
+         fin_validate(fin_need(nrow(actual) > 0, "예측을 위한 실측값이 없습니다."))
+         fc <- res$forecast
+         y_min <- min(c(actual$sales, fc$yhat_lower), na.rm = TRUE)
+         y_max <- max(c(actual$sales, fc$yhat_upper), na.rm = TRUE)
+         last_year <- max(actual$year, na.rm = TRUE)
+         plot_ly() %>%
+            add_trace(data = actual, x = ~year, y = ~sales, type = "scatter", mode = "lines+markers", name = paste0(src, " 실제")) %>%
+            add_trace(data = fc, x = ~year, y = ~yhat, type = "scatter", mode = "lines+markers", name = paste0(src, " 예측")) %>%
+            add_ribbons(data = fc, x = ~year, ymin = ~yhat_lower, ymax = ~yhat_upper, name = "예측 구간",
+                        fillcolor = "rgba(68, 114, 196, 0.2)", line = list(color = "transparent")) %>%
+            layout(
+               yaxis = list(title = "매출액"),
+               xaxis = list(title = "연도"),
+               shapes = list(list(
+                  type = "line", x0 = last_year, x1 = last_year,
+                  y0 = y_min, y1 = y_max,
+                  xref = "x", yref = "y",
+                  line = list(dash = "dash", color = "gray")
+               ))
+            )
+      })
+
+      output$pred_comp_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         fc_full <- res$full
+         fin_validate(fin_need(nrow(fc_full) > 0, "예측 결과가 없습니다."))
+         plot_ly(fc_full, x = ~year, y = ~trend, type = "scatter", mode = "lines", name = "추세") %>%
+            add_trace(y = ~yhat, name = "예측값", mode = "lines", line = list(dash = "dot", color = "#1f78b4")) %>%
+            layout(
+               xaxis = list(title = "연도"),
+               yaxis = list(title = "추세 / 예측")
+            )
+      })
+
+      output$pred_fc_error_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         fitted <- res$fitted
+         fin_validate(fin_need(nrow(fitted) > 0, "잔차를 계산할 데이터가 부족합니다. 예측을 다시 실행하세요."))
+         x_min <- min(fitted$year, na.rm = TRUE)
+         x_max <- max(fitted$year, na.rm = TRUE)
+         plot_ly(fitted, x = ~year, y = ~resid, type = "bar", name = "잔차(실제-예측)") %>%
+            layout(
+               xaxis = list(title = "연도"),
+               yaxis = list(title = "잔차"),
+               shapes = list(list(type = "line", x0 = x_min, x1 = x_max, y0 = 0, y1 = 0, xref = "x", yref = "y",
+                                  line = list(color = "gray", dash = "dot")))
+            )
+      })
+
+      output$pred_summary <- renderText({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
+         latest <- fc %>% slice_tail(n = 1)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         change <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (latest$yhat - hist_last$sales) / hist_last$sales
+         } else {
+            NA_real_
+         }
+         change_txt <- if (is.na(change)) "변화율 계산 불가" else scales::percent(change, accuracy = 0.1)
+         paste0(res$source, "의 ", latest$year, "년 예상 매출은 ",
+                scales::label_number(scale_cut = scales::cut_short_scale())(latest$yhat),
+                " (직전 연도 대비 ", change_txt, ") 수준입니다.")
+      })
+
+      output$pred_detail_1 <- renderText({
+         res <- fin_forecast_result()
+         yr_range <- range(res$history$year, na.rm = TRUE)
+         fin_validate(fin_need(all(is.finite(yr_range)), "학습 데이터가 부족합니다."))
+         paste0("학습 데이터: ", yr_range[1], "년 ~ ", yr_range[2], "년, 예측 기간: ", res$horizon, "년")
+      })
+
+      output$pred_detail_2 <- renderText({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
+         direction <- if (nrow(fc) >= 2) {
+            diff <- fc$yhat[nrow(fc)] - fc$yhat[1]
+            if (is.na(diff) || abs(diff) < 1e-8) "보합세" else if (diff > 0) "증가세" else "감소세"
+         } else {
+            "보합세"
+         }
+         paste0("예측 결과는 ", direction, "로 나타납니다. 예측 구간과 불확실성을 고려해 재고 및 자금 계획을 점검하세요.")
       })
 
       ## 4. Monthly update ------------------------
