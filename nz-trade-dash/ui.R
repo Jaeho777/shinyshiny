@@ -424,6 +424,10 @@ body <- dashboardBody(
     # tags$style(HTML(".fa-pinterest-p { font-size: 10px; color:red;}")),
     # tags$style(HTML(".fa-linkedin { font-size: 10px; color:red;}")),
     # tags$style(HTML(".fa-tumblr { font-size: 10px; color:red;}")),
+    tags$style(HTML("
+      .viz-text-lg { font-size: 16px; line-height: 1.5; }
+      .viz-kpi-sub { font-size: 12px; font-weight: 400; }
+    ")),
 
 	    ## modify the dashboard's skin color (palette 1)
 	    tags$style(HTML("
@@ -583,16 +587,40 @@ body <- dashboardBody(
       h3("경쟁사/비교 기업 분석"),
       fluidRow(
         box(
-          title = "경쟁사/비교 기업 분석",
-          width = 12,
+          title = "데이터 상태 & 경보",
+          width = 4,
+          status = "warning",
+          solidHeader = TRUE,
+          htmlOutput("analysis_quality", class = "viz-text-lg"),
+          uiOutput("analysis_alerts", class = "viz-text-lg"),
+          tags$hr(),
+          div(class = "viz-text-lg", textOutput("analysis_desc_2"))
+        ),
+        box(
+          title = "핵심 KPI & 매출 추이",
+          width = 8,
           status = "primary",
           solidHeader = TRUE,
-          plotlyOutput("analysis_plot_1"),
+          uiOutput("analysis_kpi_row"),
+          plotlyOutput("analysis_plot_1")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "효율/수익성 비교",
+          width = 6,
+          status = "success",
+          solidHeader = TRUE,
           plotlyOutput("analysis_plot_2"),
+          div(class = "viz-text-lg", textOutput("analysis_desc_1"))
+        ),
+        box(
+          title = "포지션 맵 & 인사이트",
+          width = 6,
+          status = "info",
+          solidHeader = TRUE,
           plotlyOutput("analysis_plot_3"),
-          textOutput("analysis_desc_1"),
-          textOutput("analysis_desc_2"),
-          textOutput("analysis_desc_3")
+          div(class = "viz-text-lg", textOutput("analysis_desc_3"))
         )
       )
     ),
@@ -602,16 +630,40 @@ body <- dashboardBody(
       h3("재고/매출 예측 결과 (Prophet)"),
       fluidRow(
         box(
-          title = "재고/매출 예측 결과 (Prophet)",
-          width = 12,
+          title = "예측 시계열",
+          width = 8,
           status = "primary",
           solidHeader = TRUE,
           plotlyOutput("pred_ts_plot"),
-          plotlyOutput("pred_comp_plot"),
-          plotlyOutput("pred_fc_error_plot"),
-          textOutput("pred_summary"),
-          textOutput("pred_detail_1"),
-          textOutput("pred_detail_2")
+          div(class = "viz-text-lg", textOutput("pred_summary")),
+          div(class = "viz-text-lg", textOutput("pred_detail_1"))
+        ),
+        box(
+          title = "품질/정확도 & 리스크",
+          width = 4,
+          status = "warning",
+          solidHeader = TRUE,
+          htmlOutput("pred_quality", class = "viz-text-lg"),
+          tableOutput("pred_accuracy"),
+          uiOutput("pred_risk", class = "viz-text-lg"),
+          uiOutput("pred_action", class = "viz-text-lg"),
+          div(class = "viz-text-lg", textOutput("pred_detail_2"))
+        )
+      ),
+      fluidRow(
+        box(
+          title = "트렌드/컴포넌트",
+          width = 6,
+          status = "info",
+          solidHeader = TRUE,
+          plotlyOutput("pred_comp_plot")
+        ),
+        box(
+          title = "잔차 & 불확실성",
+          width = 6,
+          status = "success",
+          solidHeader = TRUE,
+          plotlyOutput("pred_fc_error_plot")
         )
       )
     ),
