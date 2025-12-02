@@ -67,53 +67,6 @@ header <-
       ),
       icon = icon("comment")
     ),
-    dropdownMenuCustom(
-      type = "message",
-      customSentence = customSentence_share,
-      icon = icon("share-alt"),
-      messageItem(
-        from = "Twitter",
-        message = "",
-        icon = icon("twitter"),
-        href = "https://twitter.com/intent/tweet?url=http%3A%2F%2Ftradeintelligence.mbie.govt.nz&text=New%20Zealand%20Trade%20Intelligence%20Dashboard"
-      ),
-      messageItem(
-        from = "Facebook",
-        message = "",
-        icon = icon("facebook"),
-        href = "https://www.facebook.com/sharer/sharer.php?u=http%3A%2F%2Ftradeintelligence.mbie.govt.nz"
-      ),
-      messageItem(
-        from = "Google+",
-        message = "",
-        icon = icon("google-plus"),
-        href = "https://plus.google.com/share?url=http%3A%2F%2Ftradeintelligence.mbie.govt.nz"
-      ),
-      messageItem(
-        from = "Sina Weibo",
-        message = "",
-        icon = icon("weibo"),
-        href = "http://service.weibo.com/share/share.php?url=http://example.com&appkey=&title=New%20Zealand%20Trade%20Intelligence%20Dashboard%20http%3A%2F%2Ftradeintelligence.mbie.govt.nz&pic=&ralateUid=&language=zh_cn"
-      ),
-      messageItem(
-        from = "Pinterest",
-        message = "",
-        icon = icon("pinterest-p"),
-        href = "http://pinterest.com/pin/create/button/?url=http%3A%2F%2Ftradeintelligence.mbie.govt.nz&media=&description=New%20Zealand%20Trade%20Intelligence%20Dashboard"
-      ),
-      messageItem(
-        from = "LinkedIn",
-        message = "",
-        icon = icon("linkedin"),
-        href = "http://www.linkedin.com/shareArticle?mini=true&url=http%3A%2F%2Ftradeintelligence.mbie.govt.nz&title=New%20Zealand%20Trade%20Intelligence%20Dashboard"
-      ),
-      messageItem(
-        from = "Tumblr",
-        message = "",
-        icon = icon("tumblr"),
-        href = "http://www.tumblr.com/share?v=3&u=http%3A%2F%2Ftradeintelligence.mbie.govt.nz&t=New%20Zealand%20Trade%20Intelligence%20Dashboard"
-      )
-    ),
     tags$li(class = "dropdown",
       actionLink("go_dashboard", icon("dashboard"))
     ),
@@ -624,15 +577,6 @@ body <- dashboardBody(
     tabItem(
       tabName = "analysis_graph",
       h3("내 매장 vs 비슷한 업체 한눈 비교"),
-      div(
-        class = "friendly-intro",
-        tags$p("기본 데모 데이터를 불러와 바로 비교해 드려요. 내 가게 데이터·상장사 검색/업로드를 하면 즉시 갱신됩니다."),
-        tags$div(
-          tags$span(class = "pill-chip", "1단계: 기본값으로 흐름 파악"),
-          tags$span(class = "pill-chip", "2단계: 우리 매장·비교 기업 선택"),
-          tags$span(class = "pill-chip", "3단계: 추천 행동 확인")
-        )
-      ),
       fluidRow(
         class = "impact-box",
         valueBoxOutput("analysis_insight_main", width = 4),
@@ -702,15 +646,6 @@ body <- dashboardBody(
     tabItem(
       tabName = "prediction_graph",
       h3("재고·매출 예측 (쉽게 보기)"),
-      div(
-        class = "friendly-intro",
-        tags$p("데모 기준 예측을 바로 보여드립니다. 내 데이터 업로드 후 '예측 실행'을 누르면 곧바로 반영돼요."),
-        tags$div(
-          tags$span(class = "pill-chip", "1단계: 기본 예측 확인"),
-          tags$span(class = "pill-chip", "2단계: 내 데이터 업로드/검색"),
-          tags$span(class = "pill-chip", "3단계: 추천 행동 적용")
-        )
-      ),
       fluidRow(
         class = "impact-box",
         valueBoxOutput("pred_insight_main", width = 4),
@@ -759,16 +694,8 @@ body <- dashboardBody(
       ),
       fluidRow(
         box(
-          title = "추세 분해 보기",
-          width = 6,
-          status = "info",
-          solidHeader = TRUE,
-          plotlyOutput("pred_comp_plot"),
-          div(class = "viz-text-lg", textOutput("pred_comp_note"))
-        ),
-        box(
           title = "예측 오차/폭",
-          width = 6,
+          width = 12,
           status = "success",
           solidHeader = TRUE,
           plotlyOutput("pred_fc_error_plot"),

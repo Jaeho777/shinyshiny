@@ -11988,22 +11988,26 @@ server <-
       fin_combined_df <- reactive({
          rows <- list(fin_values$df_dart, fin_values$df_my_norm)
          rows <- lapply(rows, function(x) if (is.null(x)) tibble(year = integer(), sales = numeric(), inventory = numeric(), net_income = numeric(), total_assets = numeric(), cogs = numeric(), source = character()) else x)
-         bind_rows(rows) %>%
-            filter(!is.na(.data$year)) %>%
-            group_by(.data$source, .data$year) %>%
-            summarize(
-               sales = sum(.data$sales, na.rm = TRUE),
-               inventory = sum(.data$inventory, na.rm = TRUE),
-               net_income = sum(.data$net_income, na.rm = TRUE),
-               total_assets = sum(.data$total_assets, na.rm = TRUE),
-               cogs = sum(.data$cogs, na.rm = TRUE),
-               .groups = "drop"
-            ) %>%
-            mutate(
-               inventory_turnover = if_else(!is.na(.data$cogs) & !is.na(.data$inventory) & .data$inventory != 0, .data$cogs / .data$inventory, NA_real_),
+        bind_rows(rows) %>%
+           filter(!is.na(.data$year)) %>%
+           group_by(.data$source, .data$year) %>%
+           summarize(
+              sales = sum(.data$sales, na.rm = TRUE),
+              inventory = sum(.data$inventory, na.rm = TRUE),
+              net_income = sum(.data$net_income, na.rm = TRUE),
+              total_assets = sum(.data$total_assets, na.rm = TRUE),
+              cogs = sum(.data$cogs, na.rm = TRUE),
+              .groups = "drop"
+           ) %>%
+           mutate(
+               inventory_turnover = dplyr::case_when(
+                  is.finite(.data$cogs) & is.finite(.data$inventory) & .data$inventory != 0 ~ .data$cogs / .data$inventory,
+                  is.finite(.data$sales) & is.finite(.data$inventory) & .data$inventory != 0 ~ .data$sales / .data$inventory,
+                  TRUE ~ NA_real_
+               ),
                roa = if_else(!is.na(.data$net_income) & !is.na(.data$total_assets) & .data$total_assets != 0, .data$net_income / .data$total_assets, NA_real_)
-            )
-      })
+           )
+     })
 
       observeEvent(fin_combined_df(), {
          df_all <- fin_combined_df()
@@ -12347,11 +12351,13 @@ server <-
       })
 
       output$analysis_plot_1 <- renderPlotly({
-         df <- analysis_df()
+         df <- analysis_df() %>%
+            mutate(sales_clean = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales, NA_real_))
          plot_ly(
             df,
-            x = ~year, y = ~sales / 1e8, color = ~source,
+            x = ~year, y = ~sales_clean / 1e8, color = ~source,
             type = "scatter", mode = "lines+markers",
+            connectgaps = TRUE,
             hovertemplate = paste(
                "연도: %{x}<br>",
                "매출: %{y:.1f} 억 원<br>",
@@ -12359,7 +12365,7 @@ server <-
             )
          ) %>%
             layout(
-               yaxis = list(title = "매출액 (억 원)"),
+               yaxis = list(title = "매출액 (억 원)", tickformat = ",.0f"),
                xaxis = list(title = "연도")
             )
       })
@@ -12505,7 +12511,7 @@ server <-
          me_it <- mean(me_latest$inventory_turnover, na.rm = TRUE)
          peer_it <- mean(others_latest$inventory_turnover, na.rm = TRUE)
          delta <- me_it - peer_it
-         if (is.na(delta)) return("재고회전율 비교 불가.")
+         if (is.na(delta)) return("재고회전율 비교를 위한 데이터가 부족합니다.")
          dir <- if (delta > 0) "높습니다" else "낮습니다"
          paste0("재고회전율이 경쟁사 평균보다 ", abs(round(delta, 2)), "배 ", dir, ".")
       })
@@ -12521,7 +12527,7 @@ server <-
             value = paste0(round(sales, 1), " 억"),
             subtitle = paste0(latest_year, "년 ", focus, " 매출 (억 원)"),
             color = "blue",
-            icon = icon("shopping-cart")
+            icon = NULL
          )
       })
 
@@ -12538,7 +12544,7 @@ server <-
             value = warn,
             subtitle = "주의 신호",
             color = if (warn == "특별 위험 없음") "green" else "yellow",
-            icon = icon("exclamation-triangle")
+            icon = NULL
          )
       })
 
@@ -12558,7 +12564,7 @@ server <-
             value = action,
             subtitle = "추천 행동",
             color = "purple",
-            icon = icon("check-circle")
+            icon = NULL
          )
       })
 
@@ -12570,11 +12576,16 @@ server <-
          if (is.na(horizon) || horizon < 1) horizon <- res$horizon
          sources <- unique(df_all$source)
          actual_all <- df_all %>%
-            mutate(sales_krw = sales / 1e8) %>%
+            mutate(
+               sales_krw = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales / 1e8, NA_real_)
+            ) %>%
             arrange(.data$year)
          forecasts <- list()
          for (s in sources) {
-            df_src <- df_all %>% filter(.data$source == s)
+            df_src <- df_all %>%
+               filter(.data$source == s) %>%
+               mutate(sales = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales, NA_real_)) %>%
+               filter(!is.na(.data$sales))
             if (nrow(df_src) < 3) next
             fc_try <- try(fin_safe_prophet(df_src, horizon, source_name = s), silent = TRUE)
             if (inherits(fc_try, "try-error") || is.null(fc_try$forecast)) next
@@ -12587,6 +12598,7 @@ server <-
             p <- add_trace(
                p, data = act_src, x = ~year, y = ~sales_krw, type = "scatter", mode = "lines+markers",
                name = paste0(s, " 실제"),
+               connectgaps = TRUE,
                hovertemplate = "연도: %{x}<br>실제: %{y:.1f} 억 원<extra></extra>"
             )
          }
@@ -12603,10 +12615,24 @@ server <-
                fillcolor = "rgba(68, 114, 196, 0.2)", line = list(color = "transparent"),
                hovertemplate = "연도: %{x}<br>하한: %{ymin:.1f} 억 원<br>상한: %{ymax:.1f} 억 원<extra></extra>"
             )
+            # 연결선: 마지막 실제 값과 첫 예측 값을 이어 시각적으로 끊김을 없앰
+            act_src <- actual_all %>% filter(.data$source == s, is.finite(.data$sales_krw), .data$sales_krw > 0)
+            if (nrow(act_src) && nrow(fc_src)) {
+               last_act <- act_src %>% slice_tail(n = 1)
+               first_fc <- fc_src %>% slice_head(n = 1)
+               p <- add_segments(
+                  p,
+                  x = last_act$year, xend = first_fc$year,
+                  y = last_act$sales_krw, yend = first_fc$yhat,
+                  line = list(color = "rgba(0,0,0,0.3)", dash = "dot"),
+                  hoverinfo = "skip",
+                  showlegend = FALSE
+               )
+            }
          }
          p %>%
             layout(
-               yaxis = list(title = "매출액 (억 원)"),
+               yaxis = list(title = "매출액 (억 원)", tickformat = ",.0f"),
                xaxis = list(title = "연도")
             )
       })
@@ -12641,10 +12667,29 @@ server <-
          fin_validate(fin_need(nrow(fitted) > 0, "잔차를 계산할 데이터가 부족합니다. 예측을 다시 실행하세요."))
          x_min <- min(fitted$year, na.rm = TRUE)
          x_max <- max(fitted$year, na.rm = TRUE)
-         plot_ly(fitted, x = ~year, y = ~resid / 1e8, type = "bar", name = "잔차(실제-예측)") %>%
+         abs_max <- max(abs(fitted$resid), na.rm = TRUE)
+         if (is.na(abs_max) || abs_max == 0) abs_max <- 1
+         if (abs_max >= 1e9) {
+            divisor <- 1e8; unit_label <- "억 원"; fmt_hover <- ":,.1f"
+         } else if (abs_max >= 1e7) {
+            divisor <- 1e6; unit_label <- "백만 원"; fmt_hover <- ":,.1f"
+         } else if (abs_max >= 1e5) {
+            divisor <- 1e4; unit_label <- "만 원"; fmt_hover <- ":,.0f"
+         } else {
+            divisor <- 1; unit_label <- "원"; fmt_hover <- ":,.0f"
+         }
+         plot_ly(
+            fitted,
+            x = ~year, y = ~resid / divisor,
+            type = "bar", name = "잔차(실제-예측)",
+            hovertemplate = paste0("연도: %{x}<br>잔차: %{y", fmt_hover, "} ", unit_label, "<extra></extra>")
+         ) %>%
             layout(
                xaxis = list(title = "연도"),
-               yaxis = list(title = "잔차 (억 원)"),
+               yaxis = list(
+                  title = paste0("잔차 (", unit_label, ")"),
+                  tickformat = if (unit_label == "원") ",.0f" else ",.1f"
+               ),
                shapes = list(list(type = "line", x0 = x_min, x1 = x_max, y0 = 0, y1 = 0, xref = "x", yref = "y",
                                   line = list(color = "gray", dash = "dot")))
             )
@@ -12747,7 +12792,7 @@ server <-
             value = paste0(round(latest$yhat / 1e8, 1), " 억"),
             subtitle = paste0(latest$year, "년 예상 매출"),
             color = "blue",
-            icon = icon("line-chart")
+            icon = NULL
          )
       })
 
@@ -12770,7 +12815,7 @@ server <-
             value = warn,
             subtitle = "예측 신호",
             color = if (warn == "안심 수준") "green" else "yellow",
-            icon = icon("bell")
+            icon = NULL
          )
       })
 
@@ -12792,7 +12837,7 @@ server <-
             value = action,
             subtitle = "추천 행동",
             color = "purple",
-            icon = icon("lightbulb-o")
+            icon = NULL
          )
       })
 
