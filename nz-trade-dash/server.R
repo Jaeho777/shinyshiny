@@ -12064,7 +12064,7 @@ server <-
          )
       })
 
-      output$fin_summary <- renderText({
+      fin_summary_text <- reactive({
          df <- fin_combined_df()
          fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
          latest_year <- max(df$year, na.rm = TRUE)
@@ -12106,15 +12106,18 @@ server <-
          )
       })
 
-      output$fin_ts_plot <- renderPlotly({
-         df <- fin_combined_df()
+      output$fin_summary <- renderText(fin_summary_text())
+      output$fin_summary_plus <- renderText(fin_summary_text())
+
+      make_fin_ts_plot <- function(df) {
          fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
          plot_ly(df, x = ~year, y = ~sales, color = ~source, type = "scatter", mode = "lines+markers") %>%
             layout(yaxis = list(title = "매출액"))
-      })
+      }
+      output$fin_ts_plot <- renderPlotly(make_fin_ts_plot(fin_combined_df()))
+      output$fin_ts_plot_plus <- renderPlotly(make_fin_ts_plot(fin_combined_df()))
 
-      output$fin_quad_plot <- renderPlotly({
-         df <- fin_combined_df()
+      make_fin_quad_plot <- function(df) {
          fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
          x_mean <- mean(df$inventory_turnover, na.rm = TRUE)
          y_mean <- mean(df$roa, na.rm = TRUE)
@@ -12130,16 +12133,11 @@ server <-
                xaxis = list(title = "재고자산회전율"),
                yaxis = list(title = "ROA")
             )
-      })
+      }
+      output$fin_quad_plot <- renderPlotly(make_fin_quad_plot(fin_combined_df()))
+      output$fin_quad_plot_plus <- renderPlotly(make_fin_quad_plot(fin_combined_df()))
 
-      output$fin_fc_table <- renderTable({
-         res <- fin_forecast_result()
-         res$forecast
-      })
-
-      output$fin_fc_plot <- renderPlotly({
-         res <- fin_forecast_result()
-         df_all <- fin_combined_df()
+      make_fin_fc_plot <- function(res, df_all) {
          fin_validate(fin_need(nrow(df_all) > 0, "데이터를 불러오세요"))
          src <- if (!is.null(res$source)) res$source else fin_pick_source(df_all)
          actual <- df_all %>%
@@ -12184,6 +12182,24 @@ server <-
                   bgcolor = "white"
                ))
             )
+      }
+
+      output$fin_fc_table <- renderTable({
+         res <- fin_forecast_result()
+         res$forecast
+      })
+      output$fin_fc_table_plus <- renderTable({
+         res <- fin_forecast_result()
+         res$forecast
+      })
+
+      output$fin_fc_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         make_fin_fc_plot(res, fin_combined_df())
+      })
+      output$fin_fc_plot_plus <- renderPlotly({
+         res <- fin_forecast_result()
+         make_fin_fc_plot(res, fin_combined_df())
       })
 
       observeEvent(input$fin_do_forecast, {
@@ -12200,6 +12216,418 @@ server <-
          }
          fin_values$fc_result <- fin_safe_prophet(df, horizon, source_name = chosen_source)
          showNotification("예측이 업데이트되었습니다.", type = "message", duration = 4)
+      })
+
+      ## Additional KPI boxes for teammate tabs
+      output$fin_kpi_sales <- renderValueBox({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         sales <- sum(latest$sales, na.rm = TRUE)
+         formatted <- scales::label_number(scale_cut = scales::cut_short_scale())(sales)
+         valueBox(
+            value = HTML(sprintf(
+               "<span class='fin-kpi-title'>최근 연도 매출</span><span class='fin-kpi-value'>%s</span>",
+               formatted
+            )),
+            subtitle = NULL,
+            color = "blue"
+         )
+      })
+
+      output$fin_kpi_it <- renderValueBox({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         it <- mean(latest$inventory_turnover, na.rm = TRUE)
+         it_txt <- if (is.na(it)) "자료 부족" else sprintf("%.1f배", it)
+         valueBox(
+            value = HTML(sprintf(
+               "<span class='fin-kpi-title'>재고자산회전율</span><span class='fin-kpi-value'>%s</span>",
+               it_txt
+            )),
+            subtitle = NULL,
+            color = "green"
+         )
+      })
+
+      output$fin_kpi_roa <- renderValueBox({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         roa <- mean(latest$roa, na.rm = TRUE)
+         roa_txt <- if (is.na(roa)) "자료 부족" else scales::percent(roa, accuracy = 0.1)
+         valueBox(
+            value = HTML(sprintf(
+               "<span class='fin-kpi-title'>ROA</span><span class='fin-kpi-value'>%s</span>",
+               roa_txt
+            )),
+            subtitle = NULL,
+            color = "yellow"
+         )
+      })
+
+      ## Detail tab outputs (teammate work)
+      output$detail_plot_1 <- renderPlotly({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+
+         my_df <- df %>% filter(.data$source == "My Company")
+         if (nrow(my_df) == 0 && nrow(df) > 0) {
+            src <- df$source[[1]]
+            my_df <- df %>% filter(.data$source == src)
+         }
+         fin_validate(fin_need(nrow(my_df) > 0, "내 기업 또는 비교 대상을 불러오세요"))
+
+         plot_ly() %>%
+            add_lines(
+               data = my_df,
+               x = ~year, y = ~sales,
+               name = "매출",
+               line = list(color = "#1f77b4")
+            ) %>%
+            add_lines(
+               data = my_df,
+               x = ~year, y = ~inventory,
+               name = "재고",
+               line = list(color = "#ff7f0e", dash = "dash")
+            ) %>%
+            layout(
+               xaxis = list(title = "연도", dtick = 1),
+               yaxis = list(title = "금액", tickformat = "~s"),
+               margin = list(t = 20)
+            )
+      })
+
+      output$detail_plot_2 <- renderPlotly({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 1, "패턴을 보려면 최소 2개 연도가 필요합니다."))
+
+         my_df <- df %>%
+            filter(.data$source == "My Company") %>%
+            arrange(.data$year) %>%
+            mutate(
+               sales_growth = (sales / dplyr::lag(sales)) - 1,
+               inv_ratio = if_else(sales > 0, inventory / sales, NA_real_)
+            )
+         if (nrow(my_df) == 0) {
+            src <- fin_pick_source(df)
+            my_df <- df %>%
+               filter(.data$source == src) %>%
+               arrange(.data$year) %>%
+               mutate(
+                  sales_growth = (sales / dplyr::lag(sales)) - 1,
+                  inv_ratio = if_else(sales > 0, inventory / sales, NA_real_)
+               )
+         }
+         fin_validate(fin_need(nrow(my_df) > 1, "내 기업 데이터가 부족합니다. 파일을 업로드하세요."))
+
+         bar_colors <- ifelse(my_df$sales_growth < 0, "#d62728", "#1f77b4")
+
+         plot_ly(my_df, x = ~year) %>%
+            add_bars(y = ~sales_growth, name = "매출 성장률",
+                     marker = list(color = bar_colors)) %>%
+            add_lines(
+               y = ~inv_ratio,
+               name = "재고/매출 비율",
+               yaxis = "y2",
+               line = list(color = "orange")
+            ) %>%
+            layout(
+               xaxis = list(title = "연도", dtick = 1),
+               yaxis = list(
+                  title = "매출 성장률",
+                  tickformat = ".0%",
+                  rangemode = "tozero"
+               ),
+               yaxis2 = list(
+                  title = "재고/매출 비율",
+                  overlaying = "y",
+                  side = "right",
+                  tickformat = ".0%"
+               ),
+               legend = list(x = 0.01, y = 0.99),
+               margin = list(t = 20)
+            )
+      })
+
+      output$detail_plot_3 <- renderPlotly({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         my_df <- df %>% filter(.data$source == "My Company")
+         if (nrow(my_df) == 0) {
+            my_df <- df %>% filter(.data$source == fin_pick_source(df))
+         }
+         fin_validate(fin_need(nrow(my_df) > 0, "내 기업 또는 비교 기업 데이터가 필요합니다."))
+
+         latest_year <- max(my_df$year, na.rm = TRUE)
+         latest <- my_df %>% filter(.data$year == latest_year) %>% slice_head(n = 1)
+
+         parts <- tibble::tibble(
+            항목 = c("매출", "매출원가", "재고", "총자산", "당기순이익"),
+            값 = c(
+               latest$sales,
+               latest$cogs,
+               latest$inventory,
+               latest$total_assets,
+               latest$net_income
+            ) %>% as.numeric()
+         )
+
+         colors <- c(
+            "매출" = "#1f77b4",
+            "매출원가" = "#4f9bd4",
+            "재고" = "#9ecae1",
+            "총자산" = "#2ca02c",
+            "당기순이익" = "#9467bd"
+         )
+
+         plot_ly(
+            parts,
+            x = ~항목,
+            y = ~값,
+            type = "bar",
+            marker = list(color = unname(colors[parts$항목])),
+            text = ~scales::label_number(scale_cut = scales::cut_short_scale())(값),
+            textposition = "auto"
+         ) %>%
+            layout(
+               yaxis = list(title = "금액", tickformat = "~s"),
+               margin = list(t = 20)
+            )
+      })
+
+      output$detail_plot_4 <- renderPlotly({
+         res <- fin_forecast_result()
+         df <- res$history %>% transmute(year, value = sales)
+         fc <- res$forecast %>% transmute(year, value = yhat)
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         fin_validate(fin_need(nrow(fc) > 0, "왼쪽 사이드바에서 '예측 실행'을 눌러 주세요."))
+         combined <- bind_rows(
+            mutate(df, type = "실제"),
+            mutate(fc, type = "예측")
+         ) %>% arrange(.data$year)
+
+         plot_ly(
+            data = combined,
+            x = ~year, y = ~value, color = ~type,
+            type = "scatter", mode = "lines+markers"
+         ) %>%
+            layout(
+               yaxis = list(title = "매출액", tickformat = "~s"),
+               xaxis = list(dtick = 1, title = "연도"),
+               margin = list(t = 20)
+            )
+      })
+
+      output$detail_desc_1 <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         my_df <- df %>% filter(.data$source == "My Company") %>% arrange(.data$year)
+         if (nrow(my_df) == 0) {
+            return(HTML("내 기업 데이터가 없어 재무 구조를 설명할 수 없습니다. 파일을 업로드해 주세요."))
+         }
+
+         first_year <- min(my_df$year)
+         last_year <- max(my_df$year)
+         first_sales <- my_df$sales[my_df$year == first_year]
+         last_sales <- my_df$sales[my_df$year == last_year]
+         first_inv <- my_df$inventory[my_df$year == first_year]
+         last_inv <- my_df$inventory[my_df$year == last_year]
+         sales_last_txt <- scales::label_number(scale_cut = scales::cut_short_scale())(last_sales)
+         inv_last_txt <- scales::label_number(scale_cut = scales::cut_short_scale())(last_inv)
+
+         sales_trend <- if (last_sales > first_sales * 1.1) {
+            "매출은 전반적으로 올라가는 방향입니다. 해마다 조금씩이라도 더 많은 손님이 들어오고 있다는 뜻이므로, 잘 팔리는 카테고리에 재고와 마케팅을 더 집중해도 좋습니다."
+         } else if (last_sales < first_sales * 0.9) {
+            "매출은 전반적으로 줄어드는 방향입니다. 예전만큼 팔리지 않는 구간이 생기고 있으니, 무엇이 고객을 멀어지게 하는지(가격·상품·채널)를 점검해 보세요."
+         } else {
+            "매출은 큰 폭의 변화 없이 비슷한 수준입니다. 큰 위기는 없지만, 성장 기회도 제한되어 있으니 새로운 상품/채널 실험이 필요할 수 있습니다."
+         }
+
+         inv_trend <- if (last_inv > first_inv * 1.1) {
+            "재고도 함께 늘어나는 흐름이라, 팔리지 않고 창고에 쌓이는 물량이 없는지 확인이 필요합니다."
+         } else if (last_inv < first_inv * 0.9) {
+            "재고는 오히려 줄어드는 쪽이라, 불필요하게 쌓여 있던 재고를 어느 정도 정리해 온 것으로 보입니다."
+         } else {
+            "재고 규모 역시 크게 늘지도 줄지도 않고, 비슷한 수준을 유지하고 있습니다."
+         }
+
+         avg_it <- mean(my_df$inventory_turnover, na.rm = TRUE)
+         it_txt <- if (is.na(avg_it)) {
+            "재고 회전율(연간 재고 교체 횟수)을 계산할 수 없어 정확한 속도를 확인하기 어렵습니다."
+         } else if (avg_it < 2) {
+            "재고가 1년에 두 번도 채 돌지 않아 느리게 팔리는 상품(슬로우무버)이 꽤 있을 수 있습니다. 오래 쌓여 있는 아이템은 세일/단종 대상을 따로 관리하는 것이 좋습니다."
+         } else if (avg_it < 5) {
+            "재고는 1년에 2~5번 정도의 속도로 빠져 나가며 업종 평균 수준을 보입니다. 잘 나가는 상품과 그렇지 않은 상품을 구분해 집중도를 조절하면 효율이 더 좋아집니다."
+         } else {
+            "재고는 1년에 5번 이상 새로 채워질 만큼 잘 팔리므로, 재고가 창고에 오래 묶여 있는 리스크는 크지 않습니다. 대신 품절 위험과 공급 일정 관리에 주의하세요."
+         }
+
+         inv_ratio <- ifelse(is.na(last_sales) || last_sales == 0, NA_real_, last_inv / last_sales)
+         ratio_txt <- if (is.na(inv_ratio)) {
+            ""
+         } else {
+            paste0(" (재고/매출 비율 약 ", scales::percent(inv_ratio, accuracy = 0.1), ")")
+         }
+
+         HTML(paste0(
+            "<b>매출/재고 구조</b><br/>",
+            sprintf("%d년부터 %d년까지의 흐름을 보면, ", first_year, last_year),
+            "우리 매출이 어떻게 달라졌고 그에 맞춰 재고가 잘 따라가고 있는지를 한눈에 확인할 수 있습니다. ",
+            sales_trend, "<br/>",
+            inv_trend, " 재고가 매출보다 더 가파르게 늘고 있다면 창고 공간과 자금이 묶이기 쉬우니 조기 경보로 삼으세요.<br/>",
+            it_txt, "<br/><br/>",
+            sprintf(
+               "최근 연도(%d년) 기준으로는 <b>매출 약 %s</b>, <b>재고 약 %s</b>%s 수준입니다. ",
+               last_year, sales_last_txt, inv_last_txt, ratio_txt
+            ),
+            "이 값을 ‘목표 재고 한도’와 비교해 초과분을 정리하면 현금 흐름이 훨씬 가벼워집니다."
+         ))
+      })
+
+      output$detail_desc_2 <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 1, "패턴을 설명하려면 최소 2개 연도가 필요합니다."))
+         my_df <- df %>%
+            filter(.data$source == "My Company") %>%
+            arrange(.data$year) %>%
+            mutate(
+               sales_growth = (sales / dplyr::lag(sales)) - 1
+            )
+         if (nrow(my_df) < 2 || all(is.na(my_df$sales_growth))) {
+            return(HTML("성장 패턴을 계산할 수 있는 데이터가 충분하지 않습니다."))
+         }
+
+         avg_growth <- mean(my_df$sales_growth, na.rm = TRUE)
+         vol <- sd(my_df$sales_growth, na.rm = TRUE)
+         avg_growth_txt <- if (is.na(avg_growth)) {
+            ""
+         } else if (avg_growth > 0.1) {
+            paste0("연평균으로 따지면 매년 ", scales::percent(avg_growth, accuracy = 0.1), "씩 커졌습니다. 성수기를 확대하거나 신규 채널을 과감히 테스트해 볼 만합니다. ")
+         } else if (avg_growth > 0.02) {
+            paste0("연평균 성장률은 약 ", scales::percent(avg_growth, accuracy = 0.1), "입니다. 느리지만 꾸준히 오른다면 잘 팔리는 상품군에 더 집중하면 좋습니다. ")
+         } else {
+            paste0("연평균 성장률은 약 ", scales::percent(avg_growth, accuracy = 0.1), " 수준으로, 크게 늘지도 줄지도 않는 상태입니다. 브랜딩·상품 믹스를 새로 볼 필요가 있습니다. ")
+         }
+
+         vol_txt <- if (vol > 0.15) {
+            "연도별 매출 폭이 크게 출렁입니다. 특정 시즌이나 이벤트에 매출이 크게 쏠리고 있을 가능성이 높으니, 성수기 대비를 철저히 하고 비수기에는 재고를 낮게 가져가야 합니다."
+         } else if (vol > 0.05) {
+            "연도별 매출 차이가 어느 정도 있습니다. 어느 시즌/채널이 성과를 끌어올리는지 파악해 집중하면 효과적입니다."
+         } else {
+            "연도별 매출 차이가 크지 않아 안정적으로 유지되고 있습니다. 이럴 때는 상품 구성과 채널 효율을 더 세밀하게 관리하면 효과가 납니다."
+         }
+
+         tip_txt <- if (avg_growth > 0.05) {
+            "성장 구간에서는 “언제 가장 잘 팔리는지(예: 봄 신상품, 연말 이벤트)”를 미리 파악해 그 시기에 재고·인력을 집중하세요."
+         } else if (avg_growth < 0) {
+            "감소 구간에서는 성수기가 약해졌는지, 특정 채널에서만 하락하는지 나눠 보는 것이 중요합니다. 잘 되는 영역은 살리고, 부진한 영역은 정리하는 방향이 좋습니다."
+         } else {
+            "예측하기 어려운 구간에서는 시즌보다 상품 믹스와 채널 효율이 더 중요합니다. 어떤 상품이 수익에 기여하는지 따로 분석해 보세요."
+         }
+
+         HTML(paste0(
+            "<b>시즌·패턴</b><br/>",
+            "매년 얼마나 성장했는지, 성과가 어느 시점에 몰리는지를 나눠서 보는 것이 핵심입니다. ",
+            avg_growth_txt, "<br/>",
+            vol_txt, "<br/>",
+            "또한 월별·분기별 판매 캘린더를 다시 작성해 ‘언제 물량을 쌓고, 언제 줄일지’ 미리 정의해 두면 예측 오차가 줄어듭니다. ",
+            tip_txt
+         ))
+      })
+
+      output$detail_desc_3 <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         my_df <- df %>% filter(.data$source == "My Company")
+         if (nrow(my_df) == 0) {
+            return(HTML("내 기업 데이터가 없어 리스크 포인트를 구체적으로 제시하기 어렵습니다."))
+         }
+
+         latest_year <- max(my_df$year, na.rm = TRUE)
+         latest <- my_df %>% filter(.data$year == latest_year)
+
+         it <- mean(latest$inventory_turnover, na.rm = TRUE)
+         roa <- mean(latest$roa, na.rm = TRUE)
+         roa_txt <- if (is.na(roa)) "" else paste0("(자산 대비 이익 약 ", scales::percent(roa, accuracy = 0.1), ")")
+
+         it_risk <- if (is.na(it)) {
+            "재고가 얼마나 빨리 팔려 나가는지(재고 회전 속도)를 계산하기 어려워, 재고 리스크를 정확히 판단하기가 어렵습니다."
+         } else if (it < 2) {
+            "재고가 1년에 두 번도 채 돌지 않는 속도로, 팔리지 않고 쌓여 있는 상품이 꽤 있을 수 있습니다."
+         } else if (it < 5) {
+            "재고는 1년에 2~5번 정도의 속도로 빠져 나가며, 업종 평균 수준의 속도를 보입니다."
+         } else {
+            "재고가 1년에 5번 이상 새로 채워질 정도로 잘 팔리고 있어, 재고가 창고에 오래 머무르는 리스크는 크지 않은 편입니다."
+         }
+
+         roa_risk <- if (is.na(roa)) {
+            "회사에 묶여 있는 자산(가게·시설·재고 등)을 이용해 어느 정도 이익을 내고 있는지 계산하기 어려운 상태입니다."
+         } else if (roa < 0.03) {
+            "자산 대비 이익이 3% 미만으로, 매출 규모에 비해 남는 돈이 많지 않은 편입니다. 가게 임대료·인건비 같은 고정비 구조를 점검할 필요가 있습니다."
+         } else if (roa < 0.08) {
+            "자산 대비 이익이 3~8% 수준으로, 아주 높지는 않지만 일반적인 수준의 수익성을 보입니다."
+         } else {
+            "자산 대비 이익이 8% 이상으로, 현재 자산을 비교적 잘 활용해 돈을 벌고 있는 편입니다."
+         }
+
+         HTML(paste0(
+            "<b>리스크와 주의 신호</b><br/>",
+            latest_year, "년 데이터를 기준으로 현재 체력을 요약하면 다음과 같습니다.<br/>",
+            "· ", it_risk, "<br/>",
+            "· ", roa_risk, " ", roa_txt, "<br/>",
+            "재고 속도와 자산 활용도가 동시에 좋지 않으면 현금 흐름이 빠르게 나빠질 수 있으니, 재고 회전 목표와 월별 손익표를 함께 모니터링하세요."
+         ))
+      })
+
+      output$detail_action <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         my_df <- df %>% filter(.data$source == "My Company")
+         if (nrow(my_df) == 0) {
+            return(HTML("내 기업 데이터가 없어 구체적인 액션 플랜을 제시하기 어렵습니다. 데이터 업로드 후 다시 확인해 주세요."))
+         }
+
+         latest_year <- max(my_df$year, na.rm = TRUE)
+         latest <- my_df %>% filter(.data$year == latest_year)
+
+         it <- mean(latest$inventory_turnover, na.rm = TRUE)
+         roa <- mean(latest$roa, na.rm = TRUE)
+
+         items <- if (is.na(it) || is.na(roa)) {
+            c(
+               "POS·ERP 등에서 최근 5년 데이터를 다시 추출해 누락된 해가 없는지 확인하고, 가능한 한 동일한 회계 기준으로 맞춥니다.",
+               "핵심 상품 20%를 골라 재고 수량·입출고 날짜를 체크리스트로 정리하면, ‘느리게 움직이는 상품’이 바로 드러납니다."
+            )
+         } else if (it < 2 || roa < 0.03) {
+            c(
+               "최근 3년간 거의 팔리지 않은 SKU를 리스트업해 ‘정리 대상’ 컬럼을 만들고, 할인·묶음 판매·단종 계획을 각 항목에 적어 둡니다.",
+               "점포·온라인·마켓플레이스별 손익을 간단한 표로 만들어 적자가 나는 채널은 임대료/수수료 재협상을 시도합니다.",
+               "임대료·인건비·물류비 같은 고정비를 매출 대비 비중으로 정리하고, 상위 항목부터 비용 절감 아이디어를 실행합니다."
+            )
+         } else if (it < 5 || roa < 0.08) {
+            c(
+               "재고가 느리게 도는 카테고리에 대해 ‘어떤 옵션이 안 팔리는지(색상/사이즈/가격대)’를 세분화해 원인을 찾아냅니다.",
+               "마진이 낮은 상품은 공급가 재협상, 번들 구성, 구독형 패키지 등으로 판가·회전율을 동시에 높일 방법을 고민합니다.",
+               "잘 팔리는 상품에는 재고와 광고 예산을 더 배분하고, 그렇지 않은 군은 SKU 수를 줄여 팀의 관리 범위를 줄입니다."
+            )
+         } else {
+            c(
+               "재고가 빠르게 돌고 수익성도 준수하므로, 성장성이 높은 카테고리나 신규 채널(온라인, 라이브커머스 등)에 테스트 예산을 배정합니다.",
+               "동시에 매출이 주춤한 영역에는 미리 재고를 줄이고, 소량 테스트 발주로 전환해 손실을 제한합니다.",
+               "분기마다 ‘매출-재고-이익’ 세 지표를 동일한 대시보드에서 확인하는 루틴을 만들어, 이상 징후를 빠르게 잡아냅니다."
+            )
+         }
+
+         HTML(paste0(
+            "<b>다음 액션</b><br/><ul><li>",
+            paste(items, collapse = "</li><li>"),
+            "</li></ul>"
+         ))
       })
 
       analysis_df <- reactive({
@@ -12568,7 +12996,7 @@ server <-
          )
       })
 
-      output$pred_ts_plot <- renderPlotly({
+      make_pred_ts_plot <- function() {
          res <- fin_forecast_result()
          df_all <- fin_combined_df()
          fin_validate(fin_need(nrow(df_all) > 0, "데이터를 불러오세요"))
@@ -12615,7 +13043,6 @@ server <-
                fillcolor = "rgba(68, 114, 196, 0.2)", line = list(color = "transparent"),
                hovertemplate = "연도: %{x}<br>하한: %{ymin:.1f} 억 원<br>상한: %{ymax:.1f} 억 원<extra></extra>"
             )
-            # 연결선: 마지막 실제 값과 첫 예측 값을 이어 시각적으로 끊김을 없앰
             act_src <- actual_all %>% filter(.data$source == s, is.finite(.data$sales_krw), .data$sales_krw > 0)
             if (nrow(act_src) && nrow(fc_src)) {
                last_act <- act_src %>% slice_tail(n = 1)
@@ -12635,9 +13062,11 @@ server <-
                yaxis = list(title = "매출액 (억 원)", tickformat = ",.0f"),
                xaxis = list(title = "연도")
             )
-      })
+      }
+      output$pred_ts_plot <- renderPlotly(make_pred_ts_plot())
+      output$pred_ts_plot_plus <- renderPlotly(make_pred_ts_plot())
 
-      output$pred_comp_plot <- renderPlotly({
+      make_pred_comp_plot <- function() {
          res <- fin_forecast_result()
          fc_full <- res$full
          fin_validate(fin_need(nrow(fc_full) > 0, "예측 결과가 없습니다."))
@@ -12654,7 +13083,10 @@ server <-
                xaxis = list(title = "연도"),
                yaxis = list(title = "추세 / 예측 (억 원)")
             )
-      })
+      }
+
+      output$pred_comp_plot <- renderPlotly(make_pred_comp_plot())
+      output$pred_comp_plot_plus <- renderPlotly(make_pred_comp_plot())
 
       output$pred_comp_note <- renderText({
          src <- pred_focus_source()
@@ -12694,10 +13126,84 @@ server <-
                                   line = list(color = "gray", dash = "dot")))
             )
       })
+      output$pred_fc_error_plot_plus <- renderPlotly({
+         res <- fin_forecast_result()
+         fitted <- res$fitted
+         fin_validate(fin_need(nrow(fitted) > 0, "잔차를 계산할 데이터가 부족합니다. 예측을 다시 실행하세요."))
+         x_min <- min(fitted$year, na.rm = TRUE)
+         x_max <- max(fitted$year, na.rm = TRUE)
+         abs_max <- max(abs(fitted$resid), na.rm = TRUE)
+         if (is.na(abs_max) || abs_max == 0) abs_max <- 1
+         if (abs_max >= 1e9) {
+            divisor <- 1e8; unit_label <- "억 원"; fmt_hover <- ":,.1f"
+         } else if (abs_max >= 1e7) {
+            divisor <- 1e6; unit_label <- "백만 원"; fmt_hover <- ":,.1f"
+         } else if (abs_max >= 1e5) {
+            divisor <- 1e4; unit_label <- "만 원"; fmt_hover <- ":,.0f"
+         } else {
+            divisor <- 1; unit_label <- "원"; fmt_hover <- ":,.0f"
+         }
+         plot_ly(
+            fitted,
+            x = ~year, y = ~resid / divisor,
+            type = "bar", name = "잔차(실제-예측)",
+            hovertemplate = paste0("연도: %{x}<br>잔차: %{y", fmt_hover, "} ", unit_label, "<extra></extra>")
+         ) %>%
+            layout(
+               xaxis = list(title = "연도"),
+               yaxis = list(
+                  title = paste0("잔차 (", unit_label, ")"),
+                  tickformat = if (unit_label == "원") ",.0f" else ",.1f"
+               ),
+               shapes = list(list(type = "line", x0 = x_min, x1 = x_max, y0 = 0, y1 = 0, xref = "x", yref = "y",
+                                  line = list(color = "gray", dash = "dot")))
+            )
+      })
 
       output$pred_resid_note <- renderText({
          src <- pred_focus_source()
          paste0("잔차/불확실성 역시 '", src, "' 예측을 기반으로 합니다. 다른 소스 잔차는 별도 계산되지 않습니다.")
+      })
+
+      output$pred_error_box <- renderPlotly({
+         res <- fin_forecast_result()
+         fitted <- res$fitted
+         fin_validate(fin_need(nrow(fitted) > 0, "잔차를 계산할 데이터가 부족합니다. 예측을 다시 실행하세요."))
+         plot_ly(fitted, y = ~resid, type = "box", name = "예측 오차", boxpoints = "all", jitter = 0.3) %>%
+            layout(
+               yaxis = list(title = "예측 - 실제", tickformat = "~s"),
+               margin = list(t = 20)
+            )
+      })
+
+      output$pred_cum_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         hist_df <- res$history %>% arrange(.data$year) %>% mutate(value = cumsum(.data$sales), type = "실제 누적")
+         fc_df <- res$forecast %>% arrange(.data$year) %>% mutate(value = cumsum(.data$yhat), type = "예측 누적")
+         fin_validate(fin_need(nrow(hist_df) > 0, "데이터를 불러오세요"))
+         fin_validate(fin_need(nrow(fc_df) > 0, "예측을 실행하면 누적값을 볼 수 있습니다."))
+         combined <- bind_rows(
+            hist_df %>% select(.data$year, .data$value, .data$type),
+            fc_df %>% select(.data$year, .data$value, .data$type)
+         )
+         plot_ly(combined, x = ~year, y = ~value, color = ~type, type = "scatter", mode = "lines+markers") %>%
+            layout(
+               xaxis = list(title = "연도", dtick = 1),
+               yaxis = list(title = "누적 매출", tickformat = "~s"),
+               margin = list(t = 20)
+            )
+      })
+
+      output$pred_error_hist <- renderPlotly({
+         res <- fin_forecast_result()
+         fitted <- res$fitted
+         fin_validate(fin_need(nrow(fitted) > 0, "잔차를 계산할 데이터가 부족합니다. 예측을 다시 실행하세요."))
+         plot_ly(fitted, x = ~resid, type = "histogram", nbinsx = min(12, nrow(fitted))) %>%
+            layout(
+               xaxis = list(title = "예측 - 실제", tickformat = "~s"),
+               yaxis = list(title = "빈도"),
+               margin = list(t = 20)
+            )
       })
 
       output$pred_quality <- renderUI({
@@ -12858,7 +13364,7 @@ server <-
             ))
       })
 
-      output$pred_summary <- renderText({
+      pred_summary_text <- reactive({
          res <- fin_forecast_result()
          fc <- res$forecast %>% arrange(.data$year)
          fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
@@ -12874,15 +13380,19 @@ server <-
                 scales::label_number(scale_cut = scales::cut_short_scale())(latest$yhat),
                 " (직전 연도 대비 ", change_txt, ") 수준입니다.")
       })
+      output$pred_summary <- renderText(pred_summary_text())
+      output$pred_summary_plus <- renderText(pred_summary_text())
 
-      output$pred_detail_1 <- renderText({
+      pred_detail_1_text <- reactive({
          res <- fin_forecast_result()
          yr_range <- range(res$history$year, na.rm = TRUE)
          fin_validate(fin_need(all(is.finite(yr_range)), "학습 데이터가 부족합니다."))
          paste0("학습 데이터: ", yr_range[1], "년 ~ ", yr_range[2], "년, 예측 기간: ", res$horizon, "년")
       })
+      output$pred_detail_1 <- renderText(pred_detail_1_text())
+      output$pred_detail_1_plus <- renderText(pred_detail_1_text())
 
-      output$pred_detail_2 <- renderText({
+      pred_detail_2_text <- reactive({
          res <- fin_forecast_result()
          fc <- res$forecast %>% arrange(.data$year)
          fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
@@ -12894,6 +13404,8 @@ server <-
          }
          paste0("예측 결과는 ", direction, "로 나타납니다. 예측 구간과 불확실성을 고려해 재고 및 자금 계획을 점검하세요.")
       })
+      output$pred_detail_2 <- renderText(pred_detail_2_text())
+      output$pred_detail_2_plus <- renderText(pred_detail_2_text())
 
       output$pred_risk <- renderUI({
          res <- fin_forecast_result()
