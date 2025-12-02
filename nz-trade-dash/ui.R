@@ -120,7 +120,7 @@ siderbar <-
 
 	      useShinyjs(),
 
-	      ## 2nd Second tab shows the country/region level tab --------------
+	      ## 2nd Second tab shows the country/region level tab --------------####
 	      menuItem("Market Intelligence", tabName = "country_intel", icon = icon("globe")),
 	      div(
 	        id = "sidebar_cr",
