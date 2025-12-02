@@ -54,74 +54,10 @@ source("helper_funs.R")
 header <-
   dashboardHeader(
     title = HTML("패션 재고관리 예측 시스템"),
-    disable = FALSE,
     titleWidth = 250,
-    dropdownMenuCustom(
-      type = "message",
-      customSentence = customSentence,
-      messageItem(
-        from = "TR_SharedMailbox@mbie.govt.nz", #' Feedback and suggestions',
-        message =  "", # paste0("TR_SharedMailbox@mbie.govt.nz" ),
-        icon = icon("envelope"),
-        href = "mailto:TR_SharedMailbox@mbie.govt.nz"
-      ),
-      icon = icon("comment")
-    ),
-    dropdownMenuCustom(
-      type = "message",
-      customSentence = customSentence_share,
-      icon = icon("share-alt"),
-      messageItem(
-        from = "Twitter",
-        message = "",
-        icon = icon("twitter"),
-        href = "https://twitter.com/intent/tweet?url=http%3A%2F%2Ftradeintelligence.mbie.govt.nz&text=New%20Zealand%20Trade%20Intelligence%20Dashboard"
-      ),
-      messageItem(
-        from = "Facebook",
-        message = "",
-        icon = icon("facebook"),
-        href = "https://www.facebook.com/sharer/sharer.php?u=http%3A%2F%2Ftradeintelligence.mbie.govt.nz"
-      ),
-      messageItem(
-        from = "Google+",
-        message = "",
-        icon = icon("google-plus"),
-        href = "https://plus.google.com/share?url=http%3A%2F%2Ftradeintelligence.mbie.govt.nz"
-      ),
-      messageItem(
-        from = "Sina Weibo",
-        message = "",
-        icon = icon("weibo"),
-        href = "http://service.weibo.com/share/share.php?url=http://example.com&appkey=&title=New%20Zealand%20Trade%20Intelligence%20Dashboard%20http%3A%2F%2Ftradeintelligence.mbie.govt.nz&pic=&ralateUid=&language=zh_cn"
-      ),
-      messageItem(
-        from = "Pinterest",
-        message = "",
-        icon = icon("pinterest-p"),
-        href = "http://pinterest.com/pin/create/button/?url=http%3A%2F%2Ftradeintelligence.mbie.govt.nz&media=&description=New%20Zealand%20Trade%20Intelligence%20Dashboard"
-      ),
-      messageItem(
-        from = "LinkedIn",
-        message = "",
-        icon = icon("linkedin"),
-        href = "http://www.linkedin.com/shareArticle?mini=true&url=http%3A%2F%2Ftradeintelligence.mbie.govt.nz&title=New%20Zealand%20Trade%20Intelligence%20Dashboard"
-      ),
-      messageItem(
-        from = "Tumblr",
-        message = "",
-        icon = icon("tumblr"),
-        href = "http://www.tumblr.com/share?v=3&u=http%3A%2F%2Ftradeintelligence.mbie.govt.nz&t=New%20Zealand%20Trade%20Intelligence%20Dashboard"
-      )
-    ),
-    tags$li(class = "dropdown",
+    tags$li(
+      class = "dropdown",
       actionLink("go_dashboard", icon("dashboard"))
-    ),
-    tags$li(class = "dropdown",
-      actionLink("go_fin", icon("line-chart"))
-    ),
-    tags$li(class = "dropdown",
-      actionLink("go_market", icon("globe"))
     )
   )
 
@@ -131,22 +67,30 @@ siderbar <-
 	    width = 200,
 	    sidebarMenu(
 	      id = "sidebar",
-	      style = "position: relative; overflow: visible;",
-	      # style = "position: relative; overflow: visible; overflow-y:scroll",
-	      # style = 'height: 90vh; overflow-y: auto;',
-	      ## 1st tab show the Main dashboard -----------
-	      menuItem("Main Dashboard",
-	        tabName = "dashboard", icon = icon("dashboard"),
-	        badgeLabel = maxYear_lb, badgeColor = "green"
+	      selected = NULL,
+	      ## 1st tab: Financial benchmarking 메인 대시보드 -----------
+	      menuItem(
+	        "Main Dashboard",
+	        tabName = "dashboard",
+	        icon = icon("line-chart")
 	      ),
-
-	      ## Financial benchmarking tab
-	      menuItem("Financial Benchmarking", tabName = "fin_bench", icon = icon("chart-line")),
-	      ## Financial benchmarking settings panel (inline, like Market Intelligence)
+	      ## 2nd tab: 내 기업 상세 분석 (detail graph)
+	      menuItem(
+	        "내 기업 상세 분석",
+	        tabName = "detail_graph",
+	        icon = icon("info-circle")
+	      ),
+	      ## 3rd tab: 예측 결과 (Prophet)
+	      menuItem(
+	        "예측 분석",
+	        tabName = "prediction_graph",
+	        icon = icon("line-chart")
+	      ),
+	      ## Financial benchmarking settings panel (shown when Main Dashboard is active)
 	      div(
 	        id = "sidebar_fin_bench",
 	        conditionalPanel(
-	          "input.sidebar === 'fin_bench'",
+	          "input.sidebar === 'dashboard' || input.sidebar === 'detail_graph' || input.sidebar === 'prediction_graph'",
 	          tags$hr(),
 	          h4("설정"),
 	          textInput("fin_corp_query", "상장사 검색", placeholder = "예: 한섬, 020000"),
@@ -161,173 +105,6 @@ siderbar <-
 	          numericInput("fin_forecast_y", "예측 연도 수", value = 3, min = 1, max = 5),
 	          actionButton("fin_do_forecast", "예측 실행", class = "btn-primary")
 	        )
-	      ),
-
-	      useShinyjs(),
-
-	      ## 2nd Second tab shows the country/region level tab --------------
-	      menuItem("Market Intelligence", tabName = "country_intel", icon = icon("globe")),
-	      div(
-	        id = "sidebar_cr",
-	        conditionalPanel(
-	          "input.sidebar === 'country_intel'",
-	          selectizeInput("select_country",
-	            "Select or search for one or multiple markets",
-	            choices = list_country,
-	            selected = NULL, width = "200px",
-	            multiple = T
-	          ), # ,
-	          # actionButton('btn_country','Submit')
-
-	          ## action button to build report
-	          actionButton("btn_build_country_report",
-	            paste0("Build Report"),
-	            icon = icon("wrench")
-	          ),
-
-	          ## reset side bar selectoin
-	          actionButton("btn_reset_cr",
-	            "Reset",
-	            icon = icon("refresh")
-	          )
-	        )
-	      ),
-
-	      ## 3rd tab shows commodity intel ----------
-	      menuItem("Commodity Intelligence",
-	        tabName = "commodity_intel", icon = icon("barcode"), startExpanded = F,
-	        menuSubItem("Exports", tabName = "ci_exports", icon = icon("export", lib = "glyphicon")),
-	        menuSubItem("Imports", tabName = "ci_imports", icon = icon("import", lib = "glyphicon")),
-	        menuSubItem("Intelligence by HS code", tabName = "ci_intel_by_hs", icon = icon("bolt"))
-	      ),
-
-	      ## give sidebar inputs a id so that it can be manipulated by css
-	      div(
-	        id = "sidebar_ci_exports",
-	        conditionalPanel(
-	          "input.sidebar === 'ci_exports'",
-
-	          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
-	          radioButtons("rbtn_prebuilt_diy_ex",
-	            tags$p("Step 1:", tags$br(), "Select commodities:"),
-	            choices = c("Pre-defined", "Self-defined"),
-	            selected = "Pre-defined",
-	            inline = F,
-	            width = "200px"
-	          ),
-
-	          ## conditional on select pre-built ones
-	          conditionalPanel(
-	            "input.rbtn_prebuilt_diy_ex == 'Pre-defined'",
-	            selectizeInput("select_comodity_ex",
-	              tags$p("Step 2:", tags$br(), "Select or search commodities"),
-	              choices = list_snz_commodity_ex,
-	              selected = NULL, width = "200px",
-	              multiple = T
-	            )
-	          ),
-	          ## conditonal on build your own report
-	          conditionalPanel(
-	            "input.rbtn_prebuilt_diy_ex == 'Self-defined'",
-	            fileInput("file_comodity_ex",
-	              tags$p("Step 2:", tags$br(), "Upload self-defined HS codes groupings"),
-	              accept = c(".csv"),
-	              width = "200px",
-	              multiple = F,
-	              buttonLabel = "Upload CSV"
-	            )
-	          ),
-	          ## action button to build report
-	          actionButton("btn_build_commodity_report_ex",
-	            paste0("Build Report"),
-	            icon = icon("wrench")
-	          ),
-
-	          ## reset side bar selectoin
-	          actionButton("btn_reset_ci_ex",
-	            "Reset",
-	            icon = icon("refresh")
-	          )
-	        )
-	      ),
-
-	      ## Show panel only when Commodity intelligence sidebar is selected
-	      div(
-	        id = "sidebar_ci_imports",
-	        conditionalPanel(
-	          "input.sidebar === 'ci_imports'",
-
-	          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
-	          radioButtons("rbtn_prebuilt_diy_im",
-	            tags$p("Step 1:", tags$br(), "Select commodities:"),
-	            choices = c("Pre-defined", "Self-defined"),
-	            selected = "Pre-defined",
-	            inline = F,
-	            width = "200px"
-	          ),
-
-	          ## conditional on select pre-built ones
-	          conditionalPanel(
-	            "input.rbtn_prebuilt_diy_im == 'Pre-defined'",
-	            selectizeInput("select_comodity_im",
-	              tags$p("Step 2:", tags$br(), "Select or search commodities"),
-	              choices = list_snz_commodity_im,
-	              selected = NULL, width = "200px",
-	              multiple = T
-	            )
-	          ),
-	          ## conditonal on build your own report
-	          conditionalPanel(
-	            "input.rbtn_prebuilt_diy_im == 'Self-defined'",
-	            fileInput("file_comodity_im",
-	              tags$p("Step 2:", tags$br(), "Upload self-defined HS codes groupings"),
-	              accept = c(".csv"),
-	              width = "200px",
-	              multiple = F,
-	              buttonLabel = "Upload CSV"
-	            )
-	          ),
-
-	          ## action button to build report
-	          actionButton("btn_build_commodity_report_im",
-	            paste0("Build Report"),
-	            icon = icon("wrench")
-	          ),
-
-	          ## reset side bar selectoin
-	          actionButton("btn_reset_ci_im",
-	            "Reset",
-	            icon = icon("refresh")
-	          )
-	        )
-	      ),
-
-	      ## Show panel only when Commodity intelligence sidebar is selected
-	      div(
-	        id = "sidebar_ci_intel_by_hs",
-	        conditionalPanel(
-	          "input.sidebar === 'ci_intel_by_hs'",
-	          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
-	          radioButtons("rbtn_intel_by_hs",
-	            tags$p("Intelligence reported on:"),
-	            choices = c("Exports", "Imports"),
-	            selected = "Exports",
-	            inline = F,
-	            width = "200px"
-	          )
-	        )
-	      ),
-
-	      ## 4th tab HS finder -------------------------
-	      # menuItem("HS code finder", tabName = 'hs_finder', icon = icon('search') ),
-
-	      ## 5th tab Data source, definition , i.e., help ---------------
-	      menuItem("FAQs", tabName = "help", icon = icon("question-circle")),
-
-	      ## 6th tab monthly update ----------------------
-	      menuItem("Stats NZ Releases",
-	        tabName = "monthly_update", icon = icon("bell"),
-	        badgeLabel = "new", badgeColor = "green"
 	      )
 	    )
 	  )
@@ -490,271 +267,158 @@ body <- dashboardBody(
 
   ## 3.1 Dashboard body --------------
   tabItems(
-    ## 3.1 Main dashboard ----------------------------------------------------------
+    ## Main dashboard: 재무 벤치마킹 ----------------------------------------------------------
     tabItem(
       tabName = "dashboard",
-      ## contents for the dashboard tab
-      div(
-        id = "main_wait_message",
-        h1("Note, initial load may take up to 10 seconds.",
-          style = "color:darkblue", align = "center"
-        ),
-        tags$hr()
-      ),
-
-      # 1.1 Export/import board ---------------------------
-      # div(class = 'scroller_anchor'),
-      # div(class = 'scroller', ) ,
-
-      h1(paste0("New Zealand trade for the ", maxYear)),
+      h3("분석 결과"),
       fluidRow(
-        valueBoxOutput("ExTotBox") %>% withSpinner(type = 4),
-        valueBoxOutput("ImTotBox"),
-        valueBoxOutput("BlTotBox")
-      ),
-      h2(paste0("Goods")),
-      fluidRow(
-        valueBoxOutput("ExGBox"),
-        valueBoxOutput("ImGBox"),
-        valueBoxOutput("BlGBox")
-      ),
-      h2(paste0("Services")),
-      fluidRow(
-        valueBoxOutput("ExSBox"),
-        valueBoxOutput("ImSBox"),
-        valueBoxOutput("BlSBox")
-      ),
-
-      ## 1.2 Time serise plot ----------------------------------------
-      h2(paste0("New Zealand trade over the past 20 years")),
-      fluidRow(
-        column(width = 6, h4("Goods and services trade", align = "center"), highchartOutput("IEGSLineHc")),
-        column(width = 6, h4("Trade balance", align = "center"), highchartOutput("GSTotalBalanceLineHc"))
-      ),
-
-
-      ## 1.3 Table shows growth rate ---------------------------------
-      h2(paste0("Short, medium, and long term growth")),
-      p("Compound annual growth rate (CAGR) for the past 1, 5, 10 and 20 years"),
-      # fluidRow( h2(paste0("Short, medium, and long term growth")),
-      #          p("Compound annual growth rate (CAGR) for the past 1, 5, 10 and 20 years") ),
-      fluidRow(dataTableOutput("GrowthTab")),
-      div(
-        id = "message_to_show_more",
-        tags$hr(),
-        tags$h3("Click on the 'Show more details' button to display additional information on free trade agreements, and imports/exports by commodities and markets."),
-        actionButton("btn_show_more",
-          paste0(" Show more details"),
-          icon = icon("chevron-circle-down"),
-          style = "padding-top:3px; padding-bottom:3px;padding-left:5px;padding-right:5px;font-size:120% "
+        box(
+          width = 12, status = "success", solidHeader = FALSE,
+          fluidRow(
+            valueBoxOutput("fin_kpi_sales"),
+            valueBoxOutput("fin_kpi_it"),
+            valueBoxOutput("fin_kpi_roa")
+          ),
+          br(),
+          textOutput("fin_summary"),
+          br(),
+          plotlyOutput("fin_ts_plot"),
+          plotlyOutput("fin_quad_plot"),
+          plotlyOutput("fin_fc_plot"),
+          tableOutput("fin_fc_table")
         )
-      ),
-      div(id = "show_more_detail"),
-      shinyjs::hidden(div(
-        id = "load_more_message",
-        tags$hr(),
-        tags$h1("Loading...", align = "center")
-      ))
-    ),
-
-	    ## Financial benchmarking tab
-	    tabItem(
-	      tabName = "fin_bench",
-	      h3("분석 결과"),
-	      fluidRow(
-	        box(
-	          width = 12, status = "success", solidHeader = FALSE,
-	          uiOutput("fin_kpi_row"),
-	          br(),
-	          textOutput("fin_summary"),
-	          br(),
-	          plotlyOutput("fin_ts_plot"),
-	          plotlyOutput("fin_quad_plot"),
-	          plotlyOutput("fin_fc_plot"),
-	          tableOutput("fin_fc_table")
-	        )
-	      )
-	    ),
-
-    ## 3.2.1 Export/import commodities/services intelligence ------------------------
-    tabItem(
-      tabName = "ci_exports",
-      ## 2.1 Help text first --------------
-      div(
-        id = "ci_howto_ex",
-        howto_ci()
-      ),
-
-      ## 3... wait message ------
-      hidden(
-        div(
-          id = "wait_message_ci_ex",
-          h2("I am preparing the report now and only for you .....")
-        )
-      ),
-
-      ## divs for pre-defined commodity groups -----------------
-      tags$div(id = "body_ex"),
-      tags$div(id = "body_growth_ex"),
-      shinyjs::hidden(div(
-        id = "body_ci_market_loading_message",
-        tags$hr(),
-        tags$h1("Generating reports...", align = "center")
-      )),
-      tags$div(id = "body_ci_markets_ex"),
-
-
-      ## divs for self-defined commodity groups -----------------
-      tags$div(id = "body_ex_self_defined"),
-      tags$div(id = "body_growth_ex_self_defined"),
-      shinyjs::hidden(div(
-        id = "body_ci_market_loading_message_self_define",
-        tags$hr(),
-        tags$h1("Generating reports...", align = "center")
-      )),
-      tags$div(id = "body_ci_markets_ex_self_defined")
-    ),
-
-    ## 3.2.2 Export/import commodities/services intelligence ------------------------
-    tabItem(
-      tabName = "ci_imports",
-      ## 3.1 Help text first ---------------------
-      div(
-        id = "ci_howto_im",
-        howto_ci()
-      ),
-
-      ## 3... wait message ------
-      hidden(
-        div(
-          id = "wait_message_ci_im",
-          h2("I am preparing the report now and only for you .....")
-        )
-      ),
-
-      ## 3.1 div for pre-defined HS group reports ----------------------
-      tags$div(id = "body_im"),
-      tags$div(id = "body_growth_im"),
-      tags$div(id = "body_ci_markets_im"),
-
-      ## 3.x div for self-defined HS group reports ----------------------
-      tags$div(id = "body_im_self_defined"),
-      tags$div(id = "body_growth_im_self_defined"),
-      tags$div(id = "body_ci_markets_im_self_defined")
-    ),
-
-
-    ## 3.2.3 Quick Intel by HS codes ---------------
-    tabItem(
-      tabName = "ci_intel_by_hs",
-      tags$div(
-        id = "ci_intel_by_hs_hstable",
-        fluidRow(
-          h1("Quick intelligence on export/import by using HS codes"),
-          h3("How to:"),
-          howto_hs_finder(),
-          dataTableOutput("HSCodeTable")
-        )
-      ) # ,
-      , div(
-        id = "clear_table",
-        # tags$hr(),
-        # tags$h3( "Click on the 'Show more details' button to display addtional information on free trade agreements, and imports/exports by commodities and markets." ),
-        actionButton("action_bnt_ClearTable",
-          paste0(" Clear all selections"),
-          icon = icon("refresh"),
-          style = "padding-top:3px; padding-bottom:3px;padding-left:5px;padding-right:5px;font-size:120% "
-        )
-      ),
-      shinyjs::hidden(div(
-        id = "ci_intel_hs_loading_message",
-        tags$hr(),
-        tags$h1("Generating reports...", align = "center")
-      )),
-      tags$div(id = "ci_intel_by_hs_toadd"),
-      shinyjs::hidden(div(
-        id = "ci_intel_hs_loading_message_intl",
-        tags$hr(),
-        tags$h1("Generating reports...", align = "center")
-      )),
-      tags$div(id = "ci_intel_by_hs_toadd_intl")
-    ),
-
-    ## 3.3 country intellgence -----------------------------------------------------
-    tabItem(
-      tabName = "country_intel",
-      ## 3.3.1 Help text first --------------
-      div(
-        id = "country_howto",
-        howto_country()
-      ),
-
-      ## 3... wait message ------
-      hidden(
-        div(
-          id = "wait_message_country_intel",
-          h2("I am preparing the report now and only for you .....")
-        )
-      ),
-
-      ## 3... div to holder created UIs ------
-      tags$div(id = "country_name"),
-      tags$div(id = "country_info"),
-      tags$div(id = "country_trade_summary"),
-      tags$div(id = "country_appendix")
-    ),
-
-    ## 3.4 HS code finder ------------------------------
-    # tabItem( tabName = 'hs_finder',
-    #          div( id = 'hs_code_finder_table' ,
-    #               fluidRow( h1( "Level 2, 4 and 6 HS code table" ),
-    #                         h3( "How to:"),
-    #                         howto_hs_finder(),
-    #                         dataTableOutput("HSCodeTable")
-    #                         )
-    #               )
-    #          ),
-
-    ## 3.5 Help and info -------------------------------
-    tabItem(
-      tabName = "help",
-      ## 3.5.1 Data sources ---------------
-      div(
-        id = "help_contact",
-        contact()
-      ),
-      div(
-        id = "help_data_source",
-        data_source()
-      ),
-      div(
-        id = "when_to_update",
-        when_update()
-      ),
-      div(
-        id = "help_hs_code",
-        hs_code_explain()
-      ),
-      div(
-        id = "help_trade_term",
-        trade_terms()
-      ),
-      div(
-        id = "help_confidential_data",
-        confidential_trade_data()
-      ),
-      div(
-        id = "help_urgent_update",
-        urgent_updates()
       )
     ),
 
-    ## 3.6 Monthly update from Stats NZ --------------
+    ## Detail tab: 내 기업 상세 분석 ----------------------------------------------------------
     tabItem(
-      tabName = "monthly_update",
-      div(
-        id = "monthly_update",
-        fluidRow(htmlOutput("MonthlyUpdate"))
+      tabName = "detail_graph",
+      h3("내 기업에 대한 자세한 설명"),
+      fluidRow(
+        valueBoxOutput("fin_kpi_sales"),
+        valueBoxOutput("fin_kpi_it"),
+        valueBoxOutput("fin_kpi_roa")
+      ),
+      br(),
+      fluidRow(
+        box(
+          title = "내 기업 추이",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("detail_plot_1", height = "320px")
+        ),
+        box(
+          title = "연도별 성장률 + 재고 비율",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("detail_plot_2", height = "320px")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "재무 구조",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("detail_plot_3", height = "320px")
+        ),
+        box(
+          title = "추가 그래프",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("detail_plot_4", height = "320px")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "설명",
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          htmlOutput("detail_desc_1"),
+          br(),
+          htmlOutput("detail_desc_2"),
+          br(),
+          htmlOutput("detail_desc_3")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "액션 플랜",
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          htmlOutput("detail_action")
+        )
+      )
+    ),
+
+    ## Prediction tab: Prophet 기반 예측 결과 -----------------------------------------------
+    tabItem(
+      tabName = "prediction_graph",
+      h3("Prophet 기반 예측 결과"),
+      fluidRow(
+        valueBoxOutput("fin_kpi_sales"),
+        valueBoxOutput("fin_kpi_it"),
+        valueBoxOutput("fin_kpi_roa")
+      ),
+      br(),
+      fluidRow(
+        box(
+          title = "예측 시계열",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_ts_plot", height = "320px")
+        ),
+        box(
+          title = "Trend / 시즌 컴포넌트",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_comp_plot", height = "320px")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "예측 오차 / 실제 비교",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_fc_error_plot", height = "320px")
+        ),
+        box(
+          title = "예측 오차 박스플롯",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_error_box", height = "320px")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "누적 매출 (실제 vs 예측)",
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_cum_plot", height = "300px")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "요약 & 인사이트",
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          textOutput("pred_summary"),
+          br(),
+          textOutput("pred_detail_1"),
+          br(),
+          textOutput("pred_detail_2")
+        )
       )
     )
   )
