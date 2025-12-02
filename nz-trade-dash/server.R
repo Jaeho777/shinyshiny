@@ -163,6 +163,7 @@ fin_make_corp_choices <- function(df) {
   setNames(df$corp_code, labels)
 }
 
+<<<<<<< HEAD
 fin_search_corp_smart <- function(corp_df, query, limit = 30) {
   if (is.null(query) || query == "") return(head(corp_df, limit))
   q <- trimws(query)
@@ -192,6 +193,41 @@ fin_search_corp_smart <- function(corp_df, query, limit = 30) {
       str_detect(.data$stock_code, q)
   )
   head(loose, limit)
+=======
+fin_search_corp_smart <- function(corp_df, query, limit = 200) {
+   if (is.null(query) || query == "") return(head(corp_df, limit))
+   q <- trimws(query)
+   if (!nzchar(q)) return(head(corp_df, limit))
+   if (str_detect(q, "^\\d{8}$")) {
+      hit <- corp_df %>% filter(.data$corp_code == q)
+      if (nrow(hit)) return(head(hit, limit))
+   }
+   q_norm <- fin_norm_name(q)
+   if (str_detect(q, "^\\d{6}$")) {
+      hit <- corp_df %>% filter(.data$stock_code == q)
+      if (nrow(hit)) return(head(hit, limit))
+   }
+   alias <- if (q_norm %in% names(fin_alias_map)) fin_alias_map[[q_norm]] else NULL
+   tokens <- if (!is.null(alias)) {
+      fin_norm_name(alias)
+   } else {
+      tks <- str_split(q, "\\s+")[[1]]
+      tks <- tks[nzchar(tks)]
+      if (length(tks) == 0) q_norm else map_chr(tks, fin_norm_name)
+   }
+   norm_series <- corp_df %>% mutate(norm_name = map_chr(.data$corp_name, fin_norm_name))
+   mask <- map_lgl(
+      norm_series$norm_name,
+      function(x) all(vapply(tokens, function(t) str_detect(x, fixed(t)), logical(1)))
+   )
+   res <- norm_series[mask, ]
+   if (nrow(res)) return(head(select(res, -norm_name), limit))
+   loose <- corp_df %>% filter(
+      str_detect(.data$corp_name, regex(q, ignore_case = TRUE)) |
+         str_detect(.data$stock_code, q)
+   )
+   head(loose, limit)
+>>>>>>> main
 }
 
 fin_safe_num <- function(x) {
@@ -318,6 +354,7 @@ fin_sample_my_company <- function(years = 2019:2023) {
   )
 }
 
+<<<<<<< HEAD
 fin_safe_prophet <- function(df, horizon, return_full = FALSE) {
   req(nrow(df) > 2)
   n_chg <- max(0, min(5, nrow(df) - 1))
@@ -343,6 +380,48 @@ fin_safe_prophet <- function(df, horizon, return_full = FALSE) {
   } else {
     preds
   }
+=======
+fin_pick_source <- function(df_all) {
+   if (is.null(df_all) || nrow(df_all) == 0 || !"source" %in% names(df_all)) return(NULL)
+   my_rows <- df_all %>% filter(.data$source == "My Company")
+   if (nrow(my_rows) > 0) return("My Company")
+   non_my <- df_all %>% filter(.data$source != "My Company")
+   if (nrow(non_my) > 0) return(non_my$source[[1]])
+   df_all$source[[1]]
+}
+
+fin_safe_prophet <- function(df, horizon, source_name = NULL) {
+   req(nrow(df) > 2)
+   horizon <- max(1L, as.integer(horizon))
+   src <- if (!is.null(source_name)) {
+      source_name
+   } else if ("source" %in% names(df) && length(df$source)) {
+      df$source[[1]]
+   } else {
+      "Series"
+   }
+   df <- df %>% arrange(.data$year)
+   m <- prophet(df %>% transmute(ds = as.Date(paste0(.data$year, "-12-31")), y = .data$sales))
+   future <- make_future_dataframe(m, periods = horizon, freq = "year")
+   preds <- predict(m, future) %>% mutate(year = as.integer(format(.data$ds, "%Y")))
+   last_year <- max(df$year, na.rm = TRUE)
+   forecast <- preds %>% filter(.data$year > last_year)
+   fitted <- preds %>%
+      filter(.data$year <= last_year) %>%
+      select(.data$year, .data$yhat, .data$yhat_lower, .data$yhat_upper) %>%
+      left_join(df %>% select(.data$year, sales), by = "year") %>%
+      rename(actual = .data$sales) %>%
+      mutate(resid = .data$actual - .data$yhat)
+   list(
+      source = src,
+      model = m,
+      forecast = forecast %>% select(.data$year, .data$yhat, .data$yhat_lower, .data$yhat_upper, .data$trend),
+      fitted = fitted,
+      full = preds %>% select(.data$year, .data$ds, .data$yhat, .data$yhat_lower, .data$yhat_upper, .data$trend),
+      history = df,
+      horizon = horizon
+   )
+>>>>>>> main
 }
 
 ## Additional small helpers (file path / upload)
@@ -462,6 +541,7 @@ server <- function(input, output, session) {
               showNotification("corp_codes.csv 읽기 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
               fin_demo_corp_codes()
             }
+<<<<<<< HEAD
           )
           fin_values$corp_real_loaded <- TRUE
         } else {
@@ -486,6 +566,2181 @@ server <- function(input, output, session) {
       if (is.null(df) || nrow(df) == 0) {
         showNotification("기업 리스트가 없습니다. 데모/키 설정을 확인하세요.", type = "error", duration = 5)
         return()
+=======
+         )
+         
+         ## 4.1 setup hs group table and related reative values ---------------
+         rv_intelHS$ie <- input$rbtn_intel_by_hs  ## imports or exports?
+         rv_intelHS$total_ie <- paste0('Total ', tolower(rv_intelHS$ie) ) ## Total exports or Total imports
+         rv_intelHS$selected_hs_table <- concord_hs24[input$HSCodeTable_rows_selected,] ## selected table
+         rv_intelHS$hs <- rv_intelHS$selected_hs_table$HS_codes  ## hs codes
+         rv_intelHS$classification <- rv_intelHS$selected_hs_table$HS_description ## hs code desription
+         rv_intelHS$hs_group <- 
+            data.frame(HS_code = rv_intelHS$hs,
+                       HS_group = rv_intelHS$classification) %>%
+            arrange( HS_code )
+         
+         ## 4.2 commodity by country data ----------
+         rv_intelHS$tmp_dtf_shiny_full <-
+            dtf_shiny_full %>%
+            filter( Type_ie == rv_intelHS$ie, 
+                    Commodity %in% rv_intelHS$hs_group$HS_code ) %>%
+            left_join( rv_intelHS$hs_group, by = c('Commodity' = 'HS_code') ) %>%
+            left_join( concord_country_iso_latlon_raw, by = 'Country' ) %>%
+            group_by( Year, Country, Type_ie, Type_gs, HS_group, ISO2, lat, lon, Note ) %>%
+            summarise( Value = sum(Value, na.rm=T) ) %>%
+            ungroup
+         
+         ## 4.3 commodity only data ------------
+         rv_intelHS$tmp_dtf_shiny_full_commodity_only <-
+            rv_intelHS$tmp_dtf_shiny_full %>%
+            group_by( Year,  Type_ie, Type_gs, HS_group, Note ) %>%
+            summarise( Value = sum(Value, na.rm=T) ) %>%
+            ungroup %>%
+            mutate( Country = 'World' )
+         
+         ## 4.4 Data for Build export/import value line chart ---------
+         rv_intelHS$tmp_top_g <-
+            rv_intelHS$tmp_dtf_shiny_full_commodity_only %>%
+            filter( Year == max(Year)) %>% 
+            arrange( -Value ) %>%
+            dplyr::select( HS_group ) %>%
+            as.matrix() %>%
+            as.character
+         
+         ## top selected commodities and top 5services
+         rv_intelHS$tmp_top <- c( rv_intelHS$tmp_top_g) #, tmp_top_s_ex)
+         
+         ## data frame to plot
+         rv_intelHS$tmp_dtf_key_line <- 
+            rv_intelHS$tmp_dtf_shiny_full_commodity_only %>%
+            filter( HS_group %in% rv_intelHS$tmp_top,
+                    Year >=2007) %>%
+            mutate( Value = round(Value/10^6),
+                    HS_group = factor(HS_group, levels = rv_intelHS$tmp_top)
+            ) %>%
+            arrange( HS_group )
+         
+         ## 4.5 Data for build export/import percent line chart ---------
+         rv_intelHS$tmp_tot <-
+            dtf_shiny_full %>%
+            filter( Country == 'World',
+                    Type_ie == rv_intelHS$ie,
+                    Year >= 2007 )  %>%
+            mutate( Value = round(Value/10^6) ) %>%
+            group_by( Year, Country, Type_ie ) %>%
+            summarize( Value = sum(Value, na.rm=T) ) %>%
+            ungroup %>%
+            mutate( HS_group =  rv_intelHS$total_ie )
+         
+         rv_intelHS$tmp_dtf_percent_line <-
+            rv_intelHS$tmp_dtf_key_line %>%
+            bind_rows( rv_intelHS$tmp_tot ) %>%
+            group_by( Year, Country, Type_ie ) %>%
+            mutate( Share = Value/Value[HS_group == rv_intelHS$total_ie ], #'Total exports' ],
+                    Value = Share*100 ) %>%
+            ungroup %>%
+            filter( HS_group != rv_intelHS$total_ie) %>% #'Total exports' ) %>%
+            mutate( HS_group = factor(HS_group, levels = rv_intelHS$tmp_top ) ) %>%
+            arrange( HS_group )
+         
+         ## 4.6 Data for build export value change table ----------------
+         rv_intelHS$tmp_dtf_key_tab <- 
+            rv_intelHS$tmp_dtf_shiny_full_commodity_only %>%
+            filter( HS_group %in% rv_intelHS$tmp_top) %>%
+            mutate( HS_group = factor(HS_group, levels = rv_intelHS$tmp_top) ) %>%
+            arrange( HS_group )
+         
+         rv_intelHS$tmp_tab_nohs <-
+            rv_intelHS$tmp_dtf_key_tab %>%
+            mutate( Name =  HS_group ) %>%
+            group_by( Name) %>%
+            do(CAGR1 = CAGR( .$Value[.$Year == max(.$Year)]/
+                                .$Value[.$Year == (max(.$Year)-1)], 1)/100,
+               CAGR5 = CAGR( .$Value[.$Year == max(.$Year)]/
+                                .$Value[.$Year == (max(.$Year)-5)], 5)/100,
+               CAGR10 = CAGR( .$Value[.$Year == max(.$Year)]/
+                                 .$Value[.$Year == (max(.$Year)-10)], 10)/100 ,
+               ABS5 = .$Value[.$Year == max(.$Year)] - .$Value[.$Year == (max(.$Year)-5)],
+               ABS10 = .$Value[.$Year == max(.$Year)] - .$Value[.$Year == (max(.$Year)-10)]
+            ) %>%
+            ungroup %>%
+            mutate( CAGR1 = as.numeric(CAGR1),
+                    CAGR5 = as.numeric(CAGR5),
+                    CAGR10 = as.numeric(CAGR10),
+                    ABS5 = as.numeric(ABS5),
+                    ABS10 = as.numeric(ABS10)
+            ) %>%
+            left_join( rv_intelHS$tmp_dtf_key_tab , 
+                       by =c('Name'='HS_group') ) %>%
+            left_join( rv_intelHS$tmp_dtf_percent_line %>% dplyr::select( -Value) %>% rename(Name = HS_group) ) %>%
+            filter( Year == max(Year) ) %>%
+            mutate( Value = Value/10^6, ABS5 = ABS5/10^6, ABS10 = ABS10/10^6 ) %>%
+            dplyr::select( Name, Value, Share, CAGR1, CAGR5, CAGR10, ABS5, ABS10) %>%
+            mutate( Name = factor(Name, levels = rv_intelHS$tmp_top),
+                    CAGR1 = ifelse(CAGR1 %in% c(Inf,-Inf), NA, CAGR1),
+                    CAGR5 = ifelse(CAGR5 %in% c(Inf,-Inf), NA, CAGR5),
+                    CAGR10 = ifelse(CAGR10 %in% c(Inf,-Inf), NA, CAGR10)
+            ) %>%
+            arrange( Name )
+         
+         ### join back to hs code
+         rv_intelHS$hs_group_flat <- 
+            rv_intelHS$hs_group %>%
+            group_by( HS_group ) %>%
+            summarise( HS_code = paste0(HS_code, collapse = '; ') ) %>%
+            ungroup
+         
+         rv_intelHS$tmp_tab <- 
+            rv_intelHS$tmp_tab_nohs %>%
+            left_join( rv_intelHS$hs_group_flat, by = c("Name"= 'HS_group') ) %>%
+            dplyr::select( HS_code, Name, Value, Share, CAGR1, CAGR5, CAGR10, ABS5, ABS10 )
+         
+         
+         ## 4.7 Data Build exports/imports by country output groups -------------------
+         ## The name of the selected commodity
+         rv_intelHS$tmp_selected <- 
+               input$select_comodity_for_market_analysis
+         
+         ## The HS codes of the selected commodity
+         rv_intelHS$tmp_hs <- 
+            rv_intelHS$hs_group$HS_code[rv_intelHS$hs_group$HS_group == rv_intelHS$tmp_selected ]
+         
+         ## The data from of the selected commodity by markets
+         rv_intelHS$tmp_dtf_market <- 
+               dtf_shiny_full %>%
+                  filter( Commodity %in% rv_intelHS$tmp_hs, 
+                          Year >= 2007,
+                          Type_ie == rv_intelHS$ie ) %>%
+                  left_join( concord_country_iso_latlon_raw, by = 'Country' ) %>%
+                  left_join( rv_intelHS$hs_group, by = c('Commodity' = 'HS_code') ) %>%
+                  group_by( Year, Country, Type_ie, Type_gs, Note, ISO2, lat, lon ) %>%
+                  summarize( Value = sum(Value, na.rm=T) ) %>%
+                  ungroup %>%
+                  mutate( Commodity = as.character( rv_intelHS$tmp_selected ) )
+         
+         ## 4.8 Data for Value Line and Percentage line for selected commodities ----------------
+         rv_intelHS$tmp_dtf_line_selected <-
+            rv_intelHS$tmp_dtf_key_line %>%
+                  filter( HS_group %in% as.character( rv_intelHS$tmp_selected ))
+         
+         ## percentage line
+         rv_intelHS$tmp_dtf_percent_selected_line <-
+            rv_intelHS$tmp_dtf_percent_line %>%
+                  filter( HS_group %in% as.character( rv_intelHS$tmp_selected ) )
+         
+         ## 4.9 Data for build highchart map  ---------------------------
+         rv_intelHS$tmp_dtf_market_map <- 
+            rv_intelHS$tmp_dtf_market %>%
+                  filter( Year == max(Year),
+                          !is.na(lat) ) %>%
+                  mutate( Value = Value/10^6,
+                          z= Value,
+                          name = Country)
+         
+         
+         
+         ## 4.10 Data for Top markets for selected commodity line chart ----------------
+         rv_intelHS$tmp_top_country_selected <- 
+               rv_intelHS$tmp_dtf_market %>%
+                  filter( Year == max(Year),
+                          Value > 0 , 
+                          !Country %in% c("World", 
+                                          "Destination Unknown - EU")
+                  ) %>% ## 1 bn commodity
+                  arrange( -Value ) %>%
+                  dplyr::select( Country ) %>%
+                  as.matrix() %>%
+                  as.character
+         
+         ### only show top 10 countries 
+         rv_intelHS$tmp_top10_country_selected <-
+            rv_intelHS$tmp_top_country_selected[1:min(10,length( rv_intelHS$tmp_top_country_selected  ))]
+         
+
+         ### derive datafrom for the line plot
+         rv_intelHS$tmp_dtf_market_line <- 
+            rv_intelHS$tmp_dtf_market %>%
+                  filter( Country %in%  as.character( rv_intelHS$tmp_top_country_selected ) ) %>%
+                  mutate( Value = Value/10^6 ,
+                          Country = factor(Country, levels = as.character( rv_intelHS$tmp_top_country_selected ) )
+                  ) %>%
+                  arrange(Country)
+         
+         
+         rv_intelHS$tmp_dtf_market_line_percent <- 
+            rv_intelHS$tmp_dtf_market_line %>%
+                  group_by(Year, Type_ie, Type_gs, Note, Commodity) %>%
+                  mutate( Share = Value/sum(Value, na.rm=T)) %>%
+                  ungroup %>%
+                  mutate( Value = Share*100 ) 
+         
+         
+         ## 4.11 Data for Growth prospective tab ----------------------
+         rv_intelHS$tmp_tab_growth <-
+            rv_intelHS$tmp_dtf_market_line %>%
+                  #filter( Country %in% as.character(tmp_top10_country_selected_ex()) ) %>%
+                  mutate( Name =  Country ) %>%
+                  group_by( Name) %>%
+                  do( CAGR1 = CAGR( .$Value[.$Year == max(.$Year)]/
+                                       .$Value[.$Year == (max(.$Year)-1)], 1)/100,
+                      CAGR5 = CAGR( .$Value[.$Year == max(.$Year)]/
+                                       .$Value[.$Year == (max(.$Year)-5)], 5)/100,
+                      CAGR10 =  CAGR( .$Value[.$Year == max(.$Year)]/
+                                         .$Value[.$Year == (max(.$Year)-10)], 10)/100,
+                      ABS5 = .$Value[.$Year == max(.$Year)] - .$Value[.$Year == (max(.$Year)- 5)],
+                      ABS10 = .$Value[.$Year == max(.$Year)] - .$Value[.$Year == (max(.$Year)- 10)]
+                  ) %>%
+                  ungroup %>%
+                  mutate( CAGR1 = as.numeric(CAGR1), 
+                          CAGR5 = as.numeric(CAGR5), 
+                          CAGR10 = as.numeric(CAGR10),
+                          ABS5 = as.numeric(ABS5),
+                          ABS10 = as.numeric(ABS10) ) %>%
+                  #filter( Year == max(Year) ) %>%
+                  left_join( rv_intelHS$tmp_dtf_market_line %>% rename(Name = Country) %>% filter( Year == max(Year) )  ) %>%
+                  left_join( rv_intelHS$tmp_dtf_market_line_percent %>% dplyr::select( -Value ) %>% rename( Name = Country) %>% filter( Year == max(Year) )  ) %>%
+                  dplyr::select( Name, Value, Share, CAGR1, CAGR5, CAGR10, ABS5, ABS10) %>%
+                  mutate( Name = factor(Name, levels = as.character( rv_intelHS$tmp_top_country_selected ) ) ) %>%
+                  arrange( Name )
+         
+         ## 4.12 Data for global situation from UN comtrade (ONLY for Export analysis) ----------------
+         if(  input$rbtn_intel_by_hs == 'Exports' ){
+            print("--------- Building Reactive values for global analysis -------------")
+            
+            ## old code ----------------------
+            # rv_intelHS$Fail_uncomtrade_country <- 
+            #    try(
+            #       rv_intelHS$tmp_global_by_country_raw <-
+            #          #get.Comtrade(r="all", p="0", rg = "1,2"  ## 1 means imports; 2 means exports (3 is re-exports excluded here)
+            #          #             , ps = paste0(tmp_un_comtrade_max_year, "," ,tmp_un_comtrade_max_year-5)
+            #          #             , cc = paste0(rv_intelHS$tmp_hs, collapse = ','), fmt = 'csv' )$data #%>%
+            #          # dplyr::select( yr, cmdCode, rgDesc, rtTitle, rt3ISO, ptTitle, qtDesc,  TradeQuantity, TradeValue) %>%
+            #          # mutate_all( as.character ) %>%
+            #          # mutate( yr = as.numeric(yr),
+            #          #         TradeQuantity = as.numeric( TradeQuantity ),
+            #          #         TradeValue = as.numeric( TradeValue )
+            #          # ) %>%
+            #          # rename( Year = yr, `Commodity.Code` = cmdCode ,
+            #          #         `Trade.Flow` = rgDesc,
+            #          #         Reporter = rtTitle,
+            #          #         `Reporter.ISO` = rt3ISO,
+            #          #         Partner = ptTitle,
+            #          #         `Qty.Unit` = qtDesc,
+            #          #         `Alt.Qty.Unit` = TradeQuantity,
+            #          #         `Trade.Value..US..` = TradeValue )
+            #       
+            #       m_ct_search( reporters = "All", partners = 'World', trade_direction = c("imports", "exports"), freq = "annual",
+            #                    commod_codes = as.character(rv_intelHS$tmp_hs),
+            #                    start_date = tmp_un_comtrade_max_year ,
+            #                    end_date = tmp_un_comtrade_max_year) %>%
+            #          bind_rows( 
+            #             m_ct_search( reporters = "All", partners = 'World', trade_direction = c("imports", "exports"), freq = "annual",
+            #                          commod_codes = as.character(rv_intelHS$tmp_hs),
+            #                          start_date = tmp_un_comtrade_max_year - 5 ,
+            #                          end_date = tmp_un_comtrade_max_year - 5)
+            #             ) %>%
+            #          #filter( year >= tmp_un_comtrade_max_year-5 &
+            #          #           year <= tmp_un_comtrade_max_year ) %>%
+            #          dplyr::select( year, commodity_code, trade_flow, reporter, reporter_iso, partner, qty_unit,  qty, trade_value_usd) %>%
+            #          rename( Year = year, 
+            #                  `Commodity.Code` = commodity_code ,
+            #                  `Trade.Flow` = trade_flow,
+            #                  Reporter = reporter,
+            #                  `Reporter.ISO` =  reporter_iso,
+            #                  Partner = partner,
+            #                  `Qty.Unit` = qty_unit,
+            #                  `Alt.Qty.Unit` = qty,
+            #                  `Trade.Value..US..` = trade_value_usd )
+            #       
+            #    )
+            # ## 
+            # if( class(rv_intelHS$Fail_uncomtrade) == "try-error" )
+            # print(rv_intelHS$Fail_uncomtrade)
+            
+            ## new download code --------------
+            print("----------- Download Uncomtrade trade by country --------------")
+            rv_intelHS$Fail_uncomtrade_country <- 
+               try(
+                  rv_intelHS$tmp_global_by_country_raw_list <- 
+                     lapply( as.character(rv_intelHS$tmp_hs) ,
+                             function(i){
+                                m_ct_search( reporters = "All", partners = 'World', trade_direction = c("imports", "exports"), freq = "annual",
+                                             commod_codes = i,
+                                             start_date = tmp_un_comtrade_max_year,
+                                             end_date = tmp_un_comtrade_max_year ) %>%
+                                   bind_rows(  m_ct_search( reporters = "All", partners = 'World', trade_direction = c("imports", "exports"), freq = "annual",
+                                                            commod_codes = i,
+                                                            start_date = tmp_un_comtrade_max_year - 5,
+                                                            end_date = tmp_un_comtrade_max_year - 5 ) 
+                                   )
+                             } 
+                     )
+               )
+            
+            ## try get EU data
+            print("----------- Download Uncomtrade trade by EU --------------")
+            rv_intelHS$Fail_uncomtrade_eu <- 
+               try(
+                  rv_intelHS$tmp_global_by_eu_raw_list <- 
+                     lapply( as.character(rv_intelHS$tmp_hs) ,
+                             function(i){
+                                m_ct_search( reporters = "EU-28", partners = 'World', trade_direction = c("imports", "exports"), freq = "annual",
+                                             commod_codes = i,
+                                             start_date = tmp_un_comtrade_max_year,
+                                             end_date = tmp_un_comtrade_max_year )  %>%
+                                   bind_rows(  m_ct_search( reporters = "EU-28", partners = 'World', trade_direction = c("imports", "exports"), freq = "annual",
+                                                            commod_codes = i,
+                                                            start_date = tmp_un_comtrade_max_year - 5,
+                                                            end_date = tmp_un_comtrade_max_year - 5 ) 
+                                   )
+                             } 
+                     )
+               )
+            
+            
+            ## then consolidate the list into dataframe
+            if( class(rv_intelHS$Fail_uncomtrade_country) != 'try-error' ){
+               print("----------- Success: Download Uncomtrade trade by country --------------")
+               ## get list to data frame
+               try(
+                  rv_intelHS$tmp_global_by_country_raw1 <- 
+                     do.call( rbind, rv_intelHS$tmp_global_by_country_raw_list )
+               )
+               
+               ## change names
+               try(
+                  rv_intelHS$tmp_global_by_country_raw <-
+                     rv_intelHS$tmp_global_by_country_raw1 %>%
+                     dplyr::select( year, commodity_code, trade_flow, reporter, reporter_iso, partner, qty_unit,  qty, trade_value_usd) %>%
+                     rename( Year = year,
+                             `Commodity.Code` = commodity_code ,
+                             `Trade.Flow` = trade_flow,
+                             Reporter = reporter,
+                             `Reporter.ISO` =  reporter_iso,
+                             Partner = partner,
+                             `Qty.Unit` = qty_unit,
+                             `Alt.Qty.Unit` = qty,
+                             `Trade.Value..US..` = trade_value_usd )
+               )
+            }
+            
+            
+            if( class(rv_intelHS$Fail_uncomtrade_eu) != 'try-error' ){
+               print("----------- Success: Download Uncomtrade trade by EU --------------")
+               ## get list to data frame
+               try(
+                  rv_intelHS$tmp_global_by_eu_raw1 <- 
+                     do.call( rbind, rv_intelHS$tmp_global_by_eu_raw_list )
+               )
+               
+               ## change names
+               try(
+                  rv_intelHS$tmp_global_by_eu_raw <-
+                     rv_intelHS$tmp_global_by_eu_raw1 %>%
+                     dplyr::select( year, commodity_code, trade_flow, reporter, reporter_iso, partner, qty_unit,  qty, trade_value_usd) %>%
+                     rename( Year = year,
+                             `Commodity.Code` = commodity_code ,
+                             `Trade.Flow` = trade_flow,
+                             Reporter = reporter,
+                             `Reporter.ISO` =  reporter_iso,
+                             Partner = partner,
+                             `Qty.Unit` = qty_unit,
+                             `Alt.Qty.Unit` = qty,
+                             `Trade.Value..US..` = trade_value_usd )
+               )
+            }
+            
+            ## 
+            if( class(rv_intelHS$Fail_uncomtrade_country) == "try-error" )
+               print(rv_intelHS$Fail_uncomtrade_country)
+            
+            if( class(rv_intelHS$Fail_uncomtrade_eu) == "try-error" )
+               print(rv_intelHS$Fail_uncomtrade_eu)
+            
+         }
+         
+         ## when both data downloaded successfully then do
+         if( class(rv_intelHS$Fail_uncomtrade_country) != "try-error" & 
+             class(rv_intelHS$Fail_uncomtrade_eu) != "try-error" & 
+             !is.null(rv_intelHS$tmp_global_by_country_raw) & 
+             input$rbtn_intel_by_hs == 'Exports'  ){
+            ## 1. format the data -----
+            print("-------------- 1. Format uncomtrade country data  ------------------")
+            ## global import and export of A commodity (sum over all HS code under this commodity) by country
+            rv_intelHS$tmp_global_by_country <- 
+               rv_intelHS$tmp_global_by_country_raw %>%
+               dplyr::select( Year,`Commodity.Code` , `Trade.Flow`, Reporter, `Reporter.ISO`, Partner, `Qty.Unit`, `Alt.Qty.Unit`, `Trade.Value..US..`) %>%
+               #group_by(Year, `Trade.Flow`, Reporter, `Reporter.ISO`, Partner, `Qty.Unit`) %>%
+               group_by(Year, `Trade.Flow`, Reporter, `Reporter.ISO`, Partner ) %>%
+               summarise( `Alt.Qty.Unit` = sum(`Alt.Qty.Unit`, na.rm=T),
+                       `Trade.Value..US..` = sum(`Trade.Value..US..`, na.rm=T)
+                       ) %>%
+               ungroup %>%
+               mutate( Price = `Trade.Value..US..`/ `Alt.Qty.Unit`) 
+            
+            print("-------------- 1.0 Format uncomtrade eu data  ------------------")
+            ## EU import and export of A commodity from world
+            rv_intelHS$tmp_eu_trade_extra_raw <- 
+               rv_intelHS$tmp_global_by_eu_raw %>%
+               dplyr::select( Year,`Commodity.Code` , `Trade.Flow`, Reporter, `Reporter.ISO`, Partner, `Qty.Unit`, `Alt.Qty.Unit`, `Trade.Value..US..`) %>%
+               #group_by(Year, `Trade.Flow`, Reporter, `Reporter.ISO`, Partner, `Qty.Unit`) %>%
+               group_by(Year, `Trade.Flow`, Reporter, `Reporter.ISO`, Partner ) %>%
+               summarise( `Alt.Qty.Unit` = sum(`Alt.Qty.Unit`, na.rm=T),
+                          `Trade.Value..US..` = sum(`Trade.Value..US..`, na.rm=T)
+               ) %>%
+               ungroup 
+            
+            ## 5 yr change in value and prices % and abs 
+            rv_intelHS$tmp_global_by_country_change <-    
+               rv_intelHS$tmp_global_by_country %>%
+               #group_by( `Trade.Flow`, Reporter, `Reporter.ISO`, Partner, `Qty.Unit`) %>%
+               group_by( `Trade.Flow`, Reporter, `Reporter.ISO`, Partner) %>%
+               do( Value_per_change = CAGR(.$`Trade.Value..US..`[.$Year==tmp_un_comtrade_max_year]/
+                                              .$`Trade.Value..US..`[.$Year== (tmp_un_comtrade_max_year)-5], 5)/100 ,
+                   Value_abs_change = .$`Trade.Value..US..`[.$Year==tmp_un_comtrade_max_year] - .$`Trade.Value..US..`[.$Year== (tmp_un_comtrade_max_year)-5] ,
+                   Price_per_change = CAGR(.$Price[.$Year==tmp_un_comtrade_max_year]/
+                                              .$Price[.$Year== (tmp_un_comtrade_max_year)-5], 5)/100 ) %>%
+               ungroup %>%
+               mutate( Value_per_change = as.numeric(Value_per_change ),
+                       Value_abs_change = as.numeric(Value_abs_change ),
+                       Price_per_change = as.numeric(Price_per_change )
+                       )
+            
+            ## data frame for producing highchart tables 
+            rv_intelHS$tmp_global_by_country_all <- 
+               rv_intelHS$tmp_global_by_country %>%
+               filter( Year == tmp_un_comtrade_max_year ) %>%
+               left_join( rv_intelHS$tmp_global_by_country_change ) %>%
+               group_by( Year, Trade.Flow  ) %>%
+               mutate( Share = as.numeric(`Trade.Value..US..`)/ sum(as.numeric(`Trade.Value..US..`), na.rm=T ) ) %>%
+               ungroup %>%
+               arrange( `Trade.Flow`, -`Trade.Value..US..`) 
+            
+            
+            ## 1.1 formate data -- get Eu28 intra and extra trade for later use in table ------
+            print("-------------- 1.1 Format uncomtrade eu data  ------------------")
+            rv_intelHS$tmp_eu_trade_all <- 
+               rv_intelHS$tmp_global_by_country %>%
+               filter( Reporter.ISO %in% concord_eu28$ISO3 ) %>%
+               #group_by( Year , `Trade.Flow`, Partner, `Qty.Unit` ) %>%
+               group_by( Year , `Trade.Flow`, Partner ) %>%
+               summarise(  `Alt.Qty.Unit` = sum( as.numeric(`Alt.Qty.Unit`), na.rm=T ),
+                           `Trade.Value..US..` = sum( as.numeric(`Trade.Value..US..`), na.rm=T ) ) %>%
+               ungroup %>%
+               mutate( Reporter = "EU-28", Reporter.ISO = 'EU2'   )
+            
+            ## derive EU trade intra
+            print("-------------- 1.1.2 derive EU trade intra  ------------------")
+            rv_intelHS$tmp_eu_trade_intra_raw <-
+               rv_intelHS$tmp_eu_trade_all %>%
+               left_join( rv_intelHS$tmp_eu_trade_extra_raw,
+                          #by = c("Year", "Trade.Flow","Reporter", "Reporter.ISO", "Partner","Qty.Unit" )
+                          by = c("Year", "Trade.Flow","Reporter", "Reporter.ISO", "Partner" )
+               ) %>%
+               mutate( `Alt.Qty.Unit` = Alt.Qty.Unit.x - Alt.Qty.Unit.y, 
+                       `Trade.Value..US..` =  `Trade.Value..US...x` - `Trade.Value..US...y` ) %>%
+               dplyr::select( -Alt.Qty.Unit.x, -Alt.Qty.Unit.y, 
+                              -`Trade.Value..US...x`,  -`Trade.Value..US...y`) #%>%
+            #mutate( Partner = "EU-28") 
+            
+            ### formate data
+            print("-------------- 1.1.3 derive EU trade extra  ------------------")
+            rv_intelHS$tmp_eu_trade_intra <- 
+               rv_intelHS$tmp_eu_trade_intra_raw %>%
+               mutate( Reporter = 'EU-28-Intra', Reporter.ISO = 'EU2-intra' )
+            
+            rv_intelHS$tmp_eu_trade_extra <- 
+               rv_intelHS$tmp_eu_trade_extra_raw %>%
+               mutate( Reporter = 'EU-28-Extra', Reporter.ISO = 'EU2-extra' )
+            
+            ## join EU intra and extra back
+            print("-------------- 1.1.4 join EU intra and extra back  ------------------")
+            rv_intelHS$tmp_global_by_country_and_eu <-
+               rv_intelHS$tmp_global_by_country_raw %>%
+               filter( !Reporter.ISO %in% concord_eu28$ISO3 ) %>%
+               dplyr::select( Year,`Commodity.Code` , `Trade.Flow`, Reporter, `Reporter.ISO`, Partner, `Qty.Unit`, `Alt.Qty.Unit`, `Trade.Value..US..`) %>%
+               #group_by(Year, `Trade.Flow`, Reporter, `Reporter.ISO`, Partner, `Qty.Unit`) %>%
+               group_by(Year, `Trade.Flow`, Reporter, `Reporter.ISO`, Partner) %>%
+               summarise( `Alt.Qty.Unit` = sum(`Alt.Qty.Unit`, na.rm=T),
+                          `Trade.Value..US..` = sum(`Trade.Value..US..`, na.rm=T)
+               ) %>%
+               ungroup %>%
+               bind_rows( rv_intelHS$tmp_eu_trade_intra ) %>%
+               bind_rows( rv_intelHS$tmp_eu_trade_extra  ) %>%
+               mutate( Price = `Trade.Value..US..`/ `Alt.Qty.Unit`)
+            
+            ## 5 yr change in value and prices % and abs 
+            print("-------------- 1.1.5 5 yr change in value and prices % and abs   ------------------")
+            rv_intelHS$tmp_global_by_country_and_eu_change <-    
+               rv_intelHS$tmp_global_by_country_and_eu %>%
+               #group_by( `Trade.Flow`, Reporter, `Reporter.ISO`, Partner, `Qty.Unit`) %>%
+               group_by( `Trade.Flow`, Reporter, `Reporter.ISO`, Partner) %>%
+               do( Value_per_change = CAGR(.$`Trade.Value..US..`[.$Year==tmp_un_comtrade_max_year]/
+                                              .$`Trade.Value..US..`[.$Year== (tmp_un_comtrade_max_year)-5], 5)/100 ,
+                   Value_abs_change = .$`Trade.Value..US..`[.$Year==tmp_un_comtrade_max_year] - .$`Trade.Value..US..`[.$Year== (tmp_un_comtrade_max_year)-5] ,
+                   Price_per_change = CAGR(.$Price[.$Year==tmp_un_comtrade_max_year]/
+                                              .$Price[.$Year== (tmp_un_comtrade_max_year)-5], 5)/100 ) %>%
+               ungroup %>%
+               mutate( Value_per_change = as.numeric(Value_per_change ),
+                       Value_abs_change = as.numeric(Value_abs_change ),
+                       Price_per_change = as.numeric(Price_per_change ) )
+            
+            ## data frame for producing highchart tables 
+            print("-------------- 1.1.6 data frame for producing highchart tables  ------------------")
+            rv_intelHS$tmp_global_by_country_and_eu_all <- 
+               rv_intelHS$tmp_global_by_country_and_eu %>%
+               filter( Year == tmp_un_comtrade_max_year ) %>%
+               left_join( rv_intelHS$tmp_global_by_country_and_eu_change ) %>%
+               group_by( Year, Trade.Flow  ) %>%
+               mutate( Share = as.numeric(`Trade.Value..US..`)/ sum(as.numeric(`Trade.Value..US..`), na.rm=T ) ) %>%
+               ungroup %>%
+               arrange( `Trade.Flow`, -`Trade.Value..US..`)
+            ## 2. calculate values for later use ------------   
+            print("-------------- 2 Calculate values for facts boxes  ------------------")
+            ## Global market size -- value now
+            rv_intelHS$tmp_global_size_value_now <- 
+               rv_intelHS$tmp_global_by_country %>%
+               group_by(Year, `Trade.Flow`,  Partner ) %>%
+               summarise(`Trade.Value..US..` = sum(as.numeric(`Trade.Value..US..`), na.rm=T) ) %>%
+               ungroup %>%
+               filter( Year == tmp_un_comtrade_max_year,
+                       `Trade.Flow` == 'Import') %>%
+               dplyr::select( `Trade.Value..US..` ) %>%
+               as.numeric()
+            
+            ## Global market size -- value 5 years ago
+            rv_intelHS$tmp_global_size_value_pre <- 
+               rv_intelHS$tmp_global_by_country %>%
+               group_by(Year, `Trade.Flow`,  Partner ) %>%
+               summarise(`Trade.Value..US..` = sum(as.numeric(`Trade.Value..US..`), na.rm=T) ) %>%
+               ungroup %>%
+               filter( Year == tmp_un_comtrade_max_year-5,
+                       `Trade.Flow` == 'Import') %>%
+               dplyr::select( `Trade.Value..US..` ) %>%
+               as.numeric()
+            
+            ## Global market size -- value change %
+            rv_intelHS$tmp_global_size_value_change <-
+               CAGR( rv_intelHS$tmp_global_size_value_now/
+                        rv_intelHS$tmp_global_size_value_pre, 5)/100
+            
+            ## Global market size -- value change abs
+            rv_intelHS$tmp_global_size_value_change_abs <-
+               rv_intelHS$tmp_global_size_value_now - rv_intelHS$tmp_global_size_value_pre 
+            
+            ## Top 3 importers share
+            rv_intelHS$tmp_top3_importers_share <-
+               rv_intelHS$tmp_global_by_country_all %>%
+               filter( `Trade.Flow` == 'Import' ) %>%
+               arrange( -Share ) %>%
+               slice(1:3) %>%
+               group_by(Year) %>%
+               summarise( Share = sum(Share, na.rm=T) ) %>%
+               ungroup %>%
+               dplyr::select(Share) %>%
+               as.numeric
+            
+            ## Top 10 importers share
+            rv_intelHS$tmp_top10_importers_share <-
+               rv_intelHS$tmp_global_by_country_all %>%
+               filter( `Trade.Flow` == 'Import' ) %>%
+               arrange( -Share ) %>%
+               slice(1:10) %>%
+               group_by(Year) %>%
+               summarise( Share = sum(Share, na.rm=T) ) %>%
+               ungroup %>%
+               dplyr::select(Share) %>%
+               as.numeric
+            
+            ##  of top 20 markets -- number of high growth market
+            rv_intelHS$tmp_number_high_growth_importers <-
+               nrow(
+                  rv_intelHS$tmp_global_by_country_all %>%
+                     filter( `Trade.Flow` == 'Import' ) %>%
+                     arrange( -Share ) %>%
+                     slice(1:20) %>%
+                     filter( Value_per_change >= 0.1 )
+               )
+            
+            ## Top 3 exporters share
+            rv_intelHS$tmp_top3_exporters_share <-
+               rv_intelHS$tmp_global_by_country_all %>%
+               filter( `Trade.Flow` == 'Export' ) %>%
+               arrange( -Share ) %>%
+               slice(1:3) %>%
+               group_by(Year) %>%
+               summarise( Share = sum(Share, na.rm=T) ) %>%
+               ungroup %>%
+               dplyr::select(Share) %>%
+               as.numeric
+            
+            ## Top 10 exporters share
+            rv_intelHS$tmp_top10_exporters_share <-
+               rv_intelHS$tmp_global_by_country_all %>%
+               filter( `Trade.Flow` == 'Export' ) %>%
+               arrange( -Share ) %>%
+               slice(1:10) %>%
+               group_by(Year) %>%
+               summarise( Share = sum(Share, na.rm=T) ) %>%
+               ungroup %>%
+               dplyr::select(Share) %>%
+               as.numeric
+            
+            ## NZ's share
+            rv_intelHS$tmp_nz_share <-
+               rv_intelHS$tmp_global_by_country_all %>%
+               filter( `Trade.Flow` == 'Export' ) %>%
+               filter( Reporter == 'New Zealand' ) %>%
+               dplyr::select(Share) %>%
+               as.numeric
+            
+            ## 3. build data for importers and exporter maps -------------------
+            print("-------------- 3 Format uncomtrade data for im/ex maps  ------------------")
+            rv_intelHS$tmp_un_comtrade_importer_map <- 
+               rv_intelHS$tmp_global_by_country_all %>%
+               filter( `Trade.Flow` == "Import" ) %>%
+               left_join( concord_uncomtrade_country, by = c('Reporter.ISO' = 'ISO3') ) %>%
+               filter( !is.na(lat) ) %>%
+               mutate( Value = `Trade.Value..US..`/10^6,
+                       z= Value,
+                       name = Reporter)
+            
+            rv_intelHS$tmp_un_comtrade_exporter_map <- 
+               rv_intelHS$tmp_global_by_country_all %>%
+               filter( `Trade.Flow` == "Export" ) %>%
+               left_join( concord_uncomtrade_country, by = c('Reporter.ISO' = 'ISO3') ) %>%
+               filter( !is.na(lat) ) %>%
+               mutate( Value = `Trade.Value..US..`/10^6,
+                       z= Value,
+                       name = Reporter)
+
+            ## 4. Build data for the summary table -----------------
+            print("-------------- 4 Format uncomtrade data for summary table  ------------------")
+            ## import tab
+            rv_intelHS$tmp_un_comtrade_import_summary_tab <- 
+               rv_intelHS$tmp_global_by_country_and_eu_all %>%
+               filter( `Trade.Flow` == 'Import' ) %>%
+               dplyr::select( Reporter, Share, 
+                              `Trade.Value..US..` ,Value_per_change, Value_abs_change,  
+                              Price, Price_per_change ) %>%
+               mutate( `Trade.Value..US..` = `Trade.Value..US..`/10^6,
+                       Value_abs_change = Value_abs_change/10^6)
+            
+            ## export tab
+            rv_intelHS$tmp_un_comtrade_export_summary_tab <- 
+               rv_intelHS$tmp_global_by_country_and_eu_all %>%
+               filter( `Trade.Flow` == 'Export' ) %>%
+               dplyr::select( Reporter, Share, 
+                              `Trade.Value..US..` ,Value_per_change, Value_abs_change,  
+                              Price, Price_per_change ) %>%
+               mutate( `Trade.Value..US..` = `Trade.Value..US..`/10^6,
+                       Value_abs_change = Value_abs_change/10^6)
+         }
+      })
+      
+      # ## some tests on reative values -----
+      # output$testHS <- renderDataTable({
+      #    req(rv_intelHS$selected_hs_table)
+      #    rv_intelHS$tmp_global_by_country_all
+      # })
+      # 
+      # insertUI( selector = '#ci_intel_by_hs_toadd',
+      #           ui = dataTableOutput("testHS") )
+      
+      ### 4.4 and 4.5 generating value and percent line plots --------------
+      output$CIExportImportValueLine <-
+         renderHighchart({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            highchart() %>%
+               hc_exporting(enabled = TRUE, formAttributes = list(target = "_blank")) %>%
+               hc_xAxis( categories = c( unique( rv_intelHS$tmp_dtf_key_line$Year) ) ) %>%
+               hc_yAxis( title = list(text = "$ million, NZD"),
+                         labels = list( format = "${value:,.0f} m")  ) %>%
+               hc_plotOptions(line = list(
+                  dataLabels = list(enabled = F),
+                  #stacking = "normal",
+                  enableMouseTracking = T #,
+                  #series = list(events = list(legendItemClick = sharelegend)) ,
+                  #showInLegend = T
+               )
+               )%>%
+               hc_tooltip(table = TRUE,
+                          sort = TRUE,
+                          pointFormat = paste0( '<br> <span style="color:{point.color}">\u25CF</span>',
+                                                " {series.name}: ${point.y} m"),
+                          headerFormat = '<span style="font-size: 13px">Year {point.key}</span>'
+               ) %>%
+               hc_legend( layout = 'vertical', align = 'left', verticalAlign = 'top', floating = T, x = 100, y = -15 ) %>%
+               hc_add_series( data =  rv_intelHS$tmp_dtf_key_line %>% filter( Type_gs == 'Goods' ) ,
+                              mapping = hcaes(  x = Year, y = Value, group = HS_group ),
+                              type = 'line',
+                              marker = list(symbol = 'circle') #,
+                              #visible = c(T,rep(F,length(tmp_top_g_ex)-1))
+               )
+         })
+      
+
+      ### plot
+      output$CIExportImportPercentLine <-
+         renderHighchart({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            highchart() %>%
+               hc_exporting(enabled = TRUE, formAttributes = list(target = "_blank")) %>%
+               hc_xAxis( categories = c( unique( rv_intelHS$tmp_dtf_percent_line$Year) ) ) %>%
+               hc_yAxis( title = list(text = "Percentage (%)"),
+                         labels = list( format = "{value:,.1f} %")  ) %>%
+               hc_plotOptions(line = list(
+                  dataLabels = list(enabled = F),
+                  #stacking = "normal",
+                  enableMouseTracking = T)
+               )%>%
+               hc_tooltip(table = TRUE,
+                          sort = TRUE,
+                          pointFormat = paste0( '<br> <span style="color:{point.color}">\u25CF</span>',
+                                                " {series.name}: {point.y:,.1f} %"),
+                          headerFormat = '<span style="font-size: 13px">Year {point.key}</span>'
+               ) %>%
+               hc_legend( layout = 'vertical', align = 'left', verticalAlign = 'top', floating = T, x = 100, y = -15 ) %>%
+               hc_add_series( data =  rv_intelHS$tmp_dtf_percent_line %>% filter( Type_gs == 'Goods' ) ,
+                              mapping = hcaes(  x = Year, y = Value, group = HS_group ),
+                              type = 'line',
+                              marker = list(symbol = 'circle') #,
+                              #visible = c(T,rep(F,length(tmp_top_g_ex)-1))
+               )
+         })
+
+      ## !!!!! try UI  commodities selected -----------
+      output$H1_title_value_percent <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            paste0( rv_intelHS$ie ," for selected commodities")
+         })
+      
+      output$H1_title_value_percent_note <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            paste0(  "Click on the commodity names in the legend area to show their trends" )
+         })
+      
+      output$H4_title_value <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            paste0( rv_intelHS$ie ," values")
+         })
+      
+      output$H4_title_percent <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            paste0( "As a percent of total ", tolower(rv_intelHS$ie) )
+         })
+         
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd',
+         ui =   div( id = 'ci_intel_by_hs_line_value_percent',
+                     fluidRow(
+                        h1( HTML(paste(textOutput("H1_title_value_percent"))) ),
+                        p( HTML(paste(textOutput("H1_title_value_percent_note")))  ),
+                        column(6, div(id = "ci_intel_by_hs_value",
+                                      h4( HTML(paste(textOutput("H4_title_value"))) ),
+                                      highchartOutput('CIExportImportValueLine') ) ),
+                        column(6, div(id = "ci_intel_by_hs_percent",
+                                      h4( HTML(paste(textOutput("H4_title_percent"))) ),
+                                      highchartOutput('CIExportImportPercentLine') ) ))
+         )
+      )
+      ## end Try UI insert --------##
+      
+      
+      ### 4.6 Generating commodity change table -------------------
+      output$GrowthTabSelected <- 
+         renderDataTable({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            datatable( rv_intelHS$tmp_tab,
+                       rownames = F,
+                       filter = c("top"),
+                       extensions = c('Buttons' ),
+                       options = list(dom = 'Bfltp', #'Bltp',# 'Bt',
+                                      buttons = c('copy', 'csv', 'excel', 'pdf', 'print') #, pageLength = -1, 
+                                      ,scrollX = TRUE
+                                      #,fixedColumns = list(leftColumns = 2) 
+                                      ,autoWidth = T
+                                      ,pageLength = 10
+                                      ,lengthMenu = list(c(10,  -1), list('10', 'All')) ,
+                                      searchHighlight = TRUE,
+                                      search = list(regex = TRUE, caseInsensitive = FALSE )
+                                      
+                       ) ,
+                       colnames = c("HS codes", "Classification","Value ($m)", paste0("Share of total ", tolower(rv_intelHS$ie) ), 'CAGR1', 'CAGR5', 'CAGR10', 'ABS5', 'ABS10')
+             ) %>%
+               formatStyle(
+                  c('CAGR1', 'CAGR5', 'CAGR10'),
+                  background = styleColorBar( c(0, max(c(rv_intelHS$tmp_tab$CAGR1,rv_intelHS$tmp_tab$CAGR5, rv_intelHS$tmp_tab$CAGR10))*2, na.rm=T) , 'lightblue'),
+                  backgroundSize = '100% 90%',
+                  backgroundRepeat = 'no-repeat',
+                  backgroundPosition = 'center'
+               ) %>%
+               formatStyle(c('CAGR1', 'CAGR5', 'CAGR10', 'ABS5', 'ABS10'),
+                           color = JS("value < 0 ? 'darkred' : value > 0 ? 'darkgreen' : 'black'")) %>%
+               formatPercentage( c('Share','CAGR1', 'CAGR5', 'CAGR10'),digit = 1 ) %>%
+               formatStyle( columns = c('Name','Value', 'Share', 'CAGR1', 'CAGR5', 'CAGR10', 'ABS5', 'ABS10'), `font-size`= '115%' ) %>%
+               formatCurrency( columns = c('Value', 'ABS5', 'ABS10'), mark = ' ', digits = 1)
+         })
+      
+      ## !!!!! try UI insert: Commodity change table ----------- 
+      output$H1_title_growth_tab <- 
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            paste0( "Short, medium, and long term growth for the selected commodities" )
+         })
+      
+      output$H1_title_growth_tab_note <- 
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            paste0( "Compound annual growth rate (CAGR) for the past 1, 5, and 10 years. Absolute value change (ABS) for the past 5 and 10 years." )
+         })
+      
+      ## insert ui here
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd',
+         ui =   div( id = 'ci_intel_by_hs_toadd_growth_tab',
+                     fluidRow( h1( HTML(paste(textOutput("H1_title_growth_tab"))) ),
+                               p( HTML(paste(textOutput("H1_title_growth_tab_note"))) ) ,
+                               dataTableOutput('GrowthTabSelected')
+                     )
+         )
+      )
+      ## end Try UI insert --------##
+      
+      
+      ## 4.7 Build exports/imports by country output groups -------------------
+      ## create a selector for each selected commodity 
+      output$Commodity_Selector_note <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            paste0( "Please select or search a commodity for its market analysis" )
+         })
+      
+      output$H1_title_Commodity_Selector <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            paste0( gsub("s", "", rv_intelHS$ie) ," markets analysis for selected commodity" )
+         })
+      
+      output$CISelectorByMarkets <- renderUI({
+         if( is.null(input$HSCodeTable_rows_selected) )
+            return(NULL)
+         selectizeInput("select_comodity_for_market_analysis",
+                        # tags$p( HTML(paste(textOutput("Commodity_Selector_note "))) ), 
+                        # choices = rv_intelHS$tmp_tab$Name[input$GrowthTabSelected_rows_all], # tmp_top_ex, 
+                        # selected = NULL, #tmp_top_ex[1], 
+                        # width = "500px",
+                        # multiple = F
+                        tags$p("Please select or search a commodity for its market analysis"), 
+                        choices =  c('Please select a commodity' = "" , 
+                                     as.character(rv_intelHS$tmp_tab$Name)
+                        ), #input$select_comodity_ex,
+                        selected = "",  width = "500px",
+                        multiple = F)
+      })
+      
+      ### selcted commodity and service outputs
+      output$Selected <- 
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) )
+               return(NULL)
+            rv_intelHS$tmp_selected
+         })
+      
+      ## !!!!! try UI insert for the selectors  ---------------
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd',
+         ui =   div( id = 'ci_intel_by_hs_toadd_markets_selector',
+                     fluidRow(h1( HTML(paste0(textOutput("H1_title_Commodity_Selector"))) ),
+                              uiOutput("CISelectorByMarkets") ),
+                     fluidRow( shiny::span(h1( HTML(paste0(textOutput("Selected"))), align = "center" ), style = "color:darkblue" ) )
+         )
+      )
+      ## end Try UI insert -----------##
+      
+      ## --- show loading message when select a commodity -------
+      observe(
+         try(
+            if( !is.null(input$select_comodity_for_market_analysis) &&
+                input$select_comodity_for_market_analysis!= "" ){
+               shinyjs::show( id = "ci_intel_hs_loading_message_intl" )
+            }
+         )
+      )
+
+      ## 4.8 Plot Value Line and Percentage line for selected commodities ----------------
+      output$CISelectedValueLine <- 
+         renderHighchart({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            highchart() %>%
+               hc_exporting(enabled = TRUE, formAttributes = list(target = "_blank")) %>%
+               hc_xAxis( categories = c( unique( rv_intelHS$tmp_dtf_line_selected$Year) ) ) %>%
+               hc_yAxis( title = list(text = "$ million, NZD"),
+                         labels = list( format = "${value:,.0f} m")  ) %>%
+               hc_plotOptions(line = list(
+                  dataLabels = list(enabled = F),
+                  #stacking = "normal",
+                  enableMouseTracking = T #,
+                  #series = list(events = list(legendItemClick = sharelegend)) ,
+                  #showInLegend = T
+               )
+               )%>%
+               hc_tooltip(table = TRUE,
+                          sort = TRUE,
+                          pointFormat = paste0( '<br> <span style="color:{point.color}">\u25CF</span>',
+                                                " {series.name}: ${point.y} m"),
+                          headerFormat = '<span style="font-size: 13px">Year {point.key}</span>'
+               ) %>%
+               hc_legend( layout = 'vertical', align = 'left', verticalAlign = 'top', floating = T, x = 100, y = -15 ) %>%
+               hc_add_series( data =  rv_intelHS$tmp_dtf_line_selected %>% filter( Type_gs == 'Goods' ) ,
+                              mapping = hcaes(  x = Year, y = Value, group = HS_group ),
+                              type = 'line',
+                              marker = list(symbol = 'circle') #,
+                              #visible = c(T,rep(F,length(tmp_top_g_ex)-1))
+               )
+        })
+      
+      # ### plot
+      output$CISelectedPercentLine <-
+         renderHighchart({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            highchart() %>%
+               hc_exporting(enabled = TRUE, formAttributes = list(target = "_blank")) %>%
+               hc_xAxis( categories = c( unique( rv_intelHS$tmp_dtf_percent_selected_line$Year) ) ) %>%
+               hc_yAxis( title = list(text = "Percentage (%)"),
+                         labels = list( format = "{value:,.1f} %")  ) %>%
+               hc_plotOptions(line = list(
+                  dataLabels = list(enabled = F),
+                  #stacking = "normal",
+                  enableMouseTracking = T)
+               )%>%
+               hc_tooltip(table = TRUE,
+                          sort = TRUE,
+                          pointFormat = paste0( '<br> <span style="color:{point.color}">\u25CF</span>',
+                                                " {series.name}: {point.y:,.1f} %"),
+                          headerFormat = '<span style="font-size: 13px">Year {point.key}</span>'
+               ) %>%
+               hc_legend( layout = 'vertical', align = 'left', verticalAlign = 'top', floating = T, x = 100, y = -15 ) %>%
+               hc_add_series( data =  rv_intelHS$tmp_dtf_percent_selected_line %>% filter( Type_gs == 'Goods' ) ,
+                              mapping = hcaes(  x = Year, y = Value, group = HS_group ),
+                              type = 'line',
+                              marker = list(symbol = 'circle') #,
+                              #visible = c(T,rep(F,length(tmp_top_g_ex)-1))
+               )
+         })
+      
+      ## !!!!! try UI insert: selected value and percnet line -----------
+      output$H2_title_selected_value_percent_line <- 
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0( rv_intelHS$ie , " trends" )
+         })
+      
+      output$H2_title_selected_value_percent_line_note <- 
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0( "Click on the commodity names in the legend area to show their trends" )
+         })
+      
+      output$H4_title_selected_value_line <- 
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0( rv_intelHS$ie , " values" )
+         })
+      
+      output$H4_title_selected_percent_line <- 
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0( "As a percent of total ", tolower(rv_intelHS$ie)  )
+         })
+      
+      ## UI here 
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd_intl',
+         ui =   div( id = 'ci_intel_by_hs_toadd_selected_line_value_percent',
+                     fluidRow( h2( HTML(paste0(textOutput("H2_title_selected_value_percent_line"))) ),
+                               p( HTML(paste0(textOutput("H2_title_selected_value_percent_line_note"))) ),
+                               column(6, div(id = "ci_intel_by_hs_value_selected", h4( HTML(paste0(textOutput("H4_title_selected_value_line"))) ), highchartOutput('CISelectedValueLine') ) ),
+                               column(6, div(id = "ci_intel_by_hs_percent_selected", h4( HTML(paste0(textOutput("H4_title_selected_percent_line"))) ), highchartOutput('CISelectedPercentLine') ) )
+                               )
+         )
+      )
+      ## end Try UI insert --------##
+      
+      
+      
+      ## 4.9 Plot  for build highchart map  ---------------------------
+      output$MapMarket <- 
+         renderHighchart({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            hcmap( data = rv_intelHS$tmp_dtf_market_map ,
+                   value = 'Value',
+                   joinBy = c('iso-a2','ISO2'), 
+                   name= paste0( rv_intelHS$ie, " value"),
+                   borderWidth = 1,
+                   borderColor = "#fafafa",
+                   nullColor = "lightgrey",
+                   tooltip = list( table = TRUE,
+                                   sort = TRUE,
+                                   headerFormat = '<span style="font-size:13px">{series.name}</span><br/>',
+                                   pointFormat = '{point.name}: <b>${point.value:,.1f} m</b>' )
+            ) %>%
+               hc_add_series(data =  rv_intelHS$tmp_dtf_market_map,
+                             type = "mapbubble",
+                             color  = hex_to_rgba("#f1c40f", 0.9),
+                             minSize = 0,
+                             name= paste0( rv_intelHS$ie," value"),
+                             maxSize = 30,
+                             tooltip = list(table = TRUE,
+                                            sort = TRUE,
+                                            headerFormat = '<span style="font-size:13px">{series.name}</span><br/>',
+                                            pointFormat = '{point.name}: <b>${point.z:,.1f} m</b>')
+               ) %>%
+               hc_exporting(enabled = TRUE, formAttributes = list(target = "_blank")) %>%
+               hc_legend( enabled=FALSE ) %>% 
+               hc_mapNavigation(enabled = TRUE) 
+         })
+      
+      ## !!!!! try UI insert: map of importer / exporters ----------- 
+      output$H2_title_map_selected <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0("Map of ", gsub("s","", tolower(rv_intelHS$ie)) ," values")
+         })
+      
+      output$H2_title_map_selected_note <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0( "The size of bubble area and color both represent the value of ", tolower(rv_intelHS$ie) ) 
+         })
+      
+      ## Insert ui here
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd_intl',
+         ui =   div( id = 'ci_intel_by_hs_toadd_markets_map',
+                     fluidRow(h2( HTML(paste0(textOutput("H2_title_map_selected"))) ) ,
+                              p( HTML(paste0(textOutput("H2_title_map_selected_note"))) ),
+                              highchartOutput('MapMarket') )
+         )
+      )
+      ## end Try UI insert --------##
+      
+      
+      
+      ## 4.10 Plot fro Top markets for selected commodity line chart ----------------
+      output$SelectedMarketLine <- renderHighchart({
+         if( is.null(input$HSCodeTable_rows_selected)| input$select_comodity_for_market_analysis == "" )
+            return(NULL)
+         highchart() %>%
+            hc_exporting(enabled = TRUE, formAttributes = list(target = "_blank")) %>%
+            hc_add_series( data =  rv_intelHS$tmp_dtf_market_line %>%
+                              filter( Country %in% as.character( rv_intelHS$tmp_top10_country_selected  ) ),
+                           mapping = hcaes(  x = Year, y = Value, group = Country),
+                           type = 'line',
+                           marker = list(symbol = 'circle'), 
+                           visible = c( rep(T,5), rep(F,length( as.character( rv_intelHS$tmp_top10_country_selected  ) )-5) )
+            ) %>%
+            hc_xAxis( categories = c( unique( rv_intelHS$tmp_dtf_market_line$Year) ) ) %>%
+            hc_yAxis( title = list(text = "$ million, NZD"),
+                      labels = list( format = "${value:,.0f} m")  ) %>%
+            hc_plotOptions(line = list(
+               dataLabels = list(enabled = F),
+               #stacking = "normal",
+               enableMouseTracking = T)
+            )%>%
+            hc_tooltip(table = TRUE,
+                       sort = TRUE,
+                       pointFormat = paste0( '<br> <span style="color:{point.color}">\u25CF</span>',
+                                             " {series.name}: ${point.y:,.0f} m"),
+                       headerFormat = '<span style="font-size: 13px">Year {point.key}</span>'
+            ) %>%
+            hc_legend( layout = 'vertical', align = 'left', verticalAlign = 'top', floating = T, x = 100, y = -15 )
+      })
+      
+      output$SelectedMarketLinePercent <-
+         renderHighchart({
+            if( is.null(input$HSCodeTable_rows_selected)| input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            highchart() %>%
+               hc_exporting(enabled = TRUE, formAttributes = list(target = "_blank")) %>%
+               hc_add_series( data =  rv_intelHS$tmp_dtf_market_line_percent %>%
+                                 filter( Country %in% as.character( rv_intelHS$tmp_top10_country_selected  ) ),
+                              mapping = hcaes(  x = Year, y = Value, group = Country),
+                              type = 'line',
+                              marker = list(symbol = 'circle'), 
+                              visible = c( rep(T,5), rep(F,length( as.character( rv_intelHS$tmp_top10_country_selected ) )-5) )
+               ) %>%
+               hc_xAxis( categories = c( unique( rv_intelHS$tmp_dtf_market_line_percent$Year) ) ) %>%
+               hc_yAxis( title = list(text = "Percentage (%)"),
+                         labels = list( format = "{value:,.1f} %")  ) %>%
+               hc_plotOptions(line = list(
+                  dataLabels = list(enabled = F),
+                  #stacking = "normal",
+                  enableMouseTracking = T)
+               )%>%
+               hc_tooltip(table = TRUE,
+                          sort = TRUE,
+                          pointFormat = paste0( '<br> <span style="color:{point.color}">\u25CF</span>',
+                                                " {series.name}: {point.y:,.1f} %"),
+                          headerFormat = '<span style="font-size: 13px">Year {point.key}</span>'
+               ) %>%
+               hc_legend( layout = 'vertical', align = 'left', verticalAlign = 'top', floating = T, x = 100, y = -15 )
+         })
+      
+      ## !!!!! try UI insert: top markets value and percent line  ----------- 
+      output$H2_title_top_market <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0( "Top 10 ", gsub("s","",tolower(rv_intelHS$ie)) ," markets trends"  )
+         })
+      
+      output$H2_title_top_market_note <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0( "Click on the country names in the legend area to show their trends"  )
+         })
+      
+      output$H4_title_top_market_value <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0( rv_intelHS$ie, " values"  )
+         })
+      
+      output$H4_title_top_market_percent <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0( "As a percent of total ", tolower(rv_intelHS$ie) ," of the selected" )
+         })
+      
+      ## insert ui here    
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd_intl',
+         ui =   div( id = 'ci_intel_by_hs_toadd_markets_top',
+                     fluidRow( h2( HTML(paste0(textOutput("H2_title_top_market"))) ),
+                               p( HTML(paste0(textOutput("H2_title_top_market_note"))) ),
+                               column(6, 
+                                      h4( HTML(paste0(textOutput("H4_title_top_market_value"))) ),
+                                      highchartOutput("SelectedMarketLine") 
+                               ),
+                               column(6,
+                                      h4( HTML(paste0(textOutput("H4_title_top_market_percent"))) ),
+                                      highchartOutput("SelectedMarketLinePercent")
+                               )
+                     )
+         )
+      )
+      ## end Try UI insert --------##
+      
+      
+      
+      ## 4.11 Table for Growth prospective tab ----------------------
+      output$SelectedMarketGrowthTab <- renderDataTable({
+         if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "")
+            return(NULL)
+         datatable( rv_intelHS$tmp_tab_growth,
+                    rownames = F,
+                    extensions = 'Buttons',
+                    options = list(dom = 'Bltp',# 'Bt', 
+                                   buttons = c('copy', 'csv', 'excel', 'pdf', 'print') #, pageLength = -1
+                                   ,scrollX = TRUE
+                                   ,pageLength = 10
+                                   ,lengthMenu = list(c(10,  -1), list('10', 'All')) 
+                                   #,fixedColumns = list(leftColumns = 2) 
+                                   #,autoWidth = T
+                    ) ,
+                    colnames=c("Markets", "Value ($m)", "Share of world marekt", 'CAGR1', 'CAGR5', 'CAGR10', 'ABS5', 'ABS10')
+         ) %>%
+            formatStyle(
+               c('CAGR1', 'CAGR5', 'CAGR10'),
+               background = styleColorBar( c(0, max(c( rv_intelHS$tmp_tab_growth$CAGR1,
+                                                       rv_intelHS$tmp_tab_growth$CAGR5,
+                                                       rv_intelHS$tmp_tab_growth$CAGR10))*2, na.rm=T) , 'lightblue'),
+               backgroundSize = '100% 90%',
+               backgroundRepeat = 'no-repeat',
+               backgroundPosition = 'center'
+            ) %>%
+            formatStyle(c('CAGR1', 'CAGR5', 'CAGR10', 'ABS5', 'ABS10'),
+                        color = JS("value < 0 ? 'darkred' : value > 0 ? 'darkgreen' : 'black'")) %>%
+            formatPercentage( c('Share', 'CAGR1', 'CAGR5', 'CAGR10'),digit = 1 ) %>%
+            formatStyle( columns = c('Name', "Value", "Share" ,'CAGR1', 'CAGR5', 'CAGR10'), `font-size`= '115%' ) %>%
+            formatCurrency( columns = c("Value", 'ABS5', 'ABS10'), mark = ' ', digits = 1)
+      })
+      
+      
+      ## !!!!! try UI insert: growth tab by markets ----------- 
+      output$H2_title_growth_market <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0( "Top ", gsub("s","",rv_intelHS$ie) ," markets growth prospective" )
+         })
+      
+      output$H2_title_growth_market_note <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0( "Compound annual growth rate (CAGR) for the past 1, 5, and 10 years. Absolute value change (ABS) for the past 5 and 10 years." )
+         })
+         
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd_intl',
+         ui =   div( id = 'ci_intel_by_hs_toadd_markets_growth',
+                     fluidRow( h2( HTML(paste0(textOutput("H2_title_growth_market"))) ),
+                               p( HTML(paste0(textOutput("H2_title_growth_market_note"))) ),
+                               dataTableOutput("SelectedMarketGrowthTab")
+                     )
+         )
+      )
+      ## end Try UI insert --------##
+      
+      ## 4.12 UN com Trade data analysis starts here Key facts table ----------
+      ## world market size
+      print("--------- Building facts value boxes -------------")
+      output$Un_comtrade_world_market_size <-
+         renderInfoBox({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            infoBox( "World market size",
+                     paste0("$", 
+                            format(round(rv_intelHS$tmp_global_size_value_now/10^6), big.mark = ","),
+                            " m"
+                            )
+                     , icon = icon('globe', lib = "glyphicon")
+               
+            )
+         })
+      
+      ## 5 year growth
+      output$Un_comtrade_world_market_change <-
+         renderInfoBox({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            
+            if( is.null(rv_intelHS$tmp_global_size_value_change) )
+               infoBox( "CAGR (5 years)",
+                        HTML(paste0( "Not available" )), 
+                        icon = icon('minus'))
+               
+            if(rv_intelHS$tmp_global_size_value_change>0 ){
+               infoBox( "CAGR (5 years)",
+                        HTML(paste0( "<font color='green'> +",
+                           round(abs(rv_intelHS$tmp_global_size_value_change)*100,1),
+                           "% </font>"
+                        )), 
+                        icon = icon('arrow-up'), color = 'green')
+            }else{
+               infoBox( "CAGR (5 years)",
+                        HTML(paste0( "<font color='red'> -",
+                           round(abs(rv_intelHS$tmp_global_size_value_change)*100,1),
+                           "% </font>"
+                        )), 
+                        icon = icon('arrow-down'), color = 'red')
+            }
+            
+         })
+      
+      ## 5 yr abs change
+      output$Un_comtrade_world_market_change_abs <-
+         renderInfoBox({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports'| input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            
+            if( is.null(rv_intelHS$tmp_global_size_value_change_abs) )
+               infoBox( "ABS (5 years)",
+                        HTML(paste0( "Not available" )), 
+                        icon = icon('minus'))
+            
+            if(rv_intelHS$tmp_global_size_value_change_abs>0 ){
+               infoBox( "ABS (5 years)",
+                        HTML(paste0("<font color='green'> +$", 
+                               format(round(rv_intelHS$tmp_global_size_value_change_abs/10^6), big.mark = ","),
+                               " m </font>"
+                        )),
+                        icon = icon('arrow-up'), color = 'green')
+            }else{
+               infoBox( "ABS (5 years)",
+                        HTML(paste0("<font color='red'> -$", 
+                               format(round(abs(rv_intelHS$tmp_global_size_value_change_abs)/10^6), big.mark = ","),
+                               " m </font>"
+                        )),
+                        icon = icon('arrow-down'), color = 'red')
+            }
+         })
+      
+      ## top 3 importer share
+      output$Un_comtrade_top3_importers_share <-
+         renderInfoBox({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports'| input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            infoBox( HTML("Top 3 importers <br> share"),
+                     paste0( 
+                        round(abs(rv_intelHS$tmp_top3_importers_share)*100,1),
+                            "%"
+                     ),
+                     icon = icon('import', lib = "glyphicon"))
+         })
+      
+      ## top 10 importer share
+      output$Un_comtrade_top10_importers_share <-
+         renderInfoBox({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            infoBox( HTML("Top 10 importers <br> share"),
+                     paste0( 
+                        round(abs(rv_intelHS$tmp_top10_importers_share)*100,1),
+                        "%"
+                     ),
+                     icon = icon('import', lib = "glyphicon"))
+         })
+      
+      ##  of top 20 markets -- number of high growth market
+      output$Un_comtrade_high_growth_importers <-
+         renderInfoBox({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports'| input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            infoBox( HTML("Top 20 importers <br> with CAGR>10%"),
+                     paste0( rv_intelHS$tmp_number_high_growth_importers) ,
+                     icon = icon('import', lib = "glyphicon"))
+         })
+      
+      
+      ## top 3 exporter share
+      output$Un_comtrade_top3_exporters_share <-
+         renderInfoBox({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            infoBox( HTML("Top 3 exporters <br> share"),
+                     paste0( 
+                        round(abs(rv_intelHS$tmp_top3_exporters_share)*100,1),
+                        "%"
+                     ),
+                     icon = icon('export', lib = "glyphicon"))
+         })
+      
+      ## top 10 exporter share
+      output$Un_comtrade_top10_exporters_share <-
+         renderInfoBox({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            infoBox( HTML("Top 10 exporters <br> share"),
+                     paste0( 
+                        round(abs(rv_intelHS$tmp_top10_exporters_share)*100,1),
+                        "%"
+                     ),
+                     icon = icon('export', lib = "glyphicon"))
+         })
+      
+      ## new zealand share
+      output$Un_comtrade_nz_share <-
+         renderInfoBox({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports'| input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            if( rv_intelHS$tmp_nz_share < 0.001 ){
+               infoBox( HTML("New Zealand <br> share"),
+                        paste0( "Less than 0.1%" ),
+                        icon = icon('export', lib = "glyphicon"))
+            }else{
+               infoBox( HTML("New Zealand <br> share"),
+                        paste0( 
+                           round(abs(rv_intelHS$tmp_nz_share)*100,1),
+                           "%"
+                        ),
+                        icon = icon('export', lib = "glyphicon"))
+            }
+            
+         })
+      
+      
+      ##!!!!! try UI insert: value box for global market facts ----------- 
+      output$H1_title_global_facts <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0( "Global market analysis (", tmp_un_comtrade_max_year ,")" )
+         })
+      
+      output$H1_title_global_facts_note <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0( "All values undner the global market analysis are reported in current US dollar" )
+         })
+      
+      output$H3_title_global_facts_summary <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0( "Key facts and summary" )
+         })
+      
+      ### insert global market key facts and summary value boxe
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd_intl',
+         ui =   div( id = 'ci_intel_by_hs_toadd_global_facts',
+                     fluidRow( 
+                        h1( HTML(paste0(textOutput("H1_title_global_facts"))) ),
+                        p( HTML(paste0(textOutput("H1_title_global_facts_note"))) ),
+                        h3( HTML(paste0(textOutput("H3_title_global_facts_summary"))) ),
+                        infoBoxOutput("Un_comtrade_world_market_size") ,
+                        infoBoxOutput("Un_comtrade_world_market_change" ) ,
+                        infoBoxOutput("Un_comtrade_world_market_change_abs" ) 
+                     ),
+                     fluidRow(
+                        infoBoxOutput("Un_comtrade_top3_importers_share" ) ,
+                        infoBoxOutput("Un_comtrade_top10_importers_share" ) ,
+                        infoBoxOutput("Un_comtrade_high_growth_importers" ) 
+                     ),
+                     fluidRow(
+                        infoBoxOutput("Un_comtrade_top3_exporters_share" ) ,
+                        infoBoxOutput("Un_comtrade_top10_exporters_share" ) ,
+                        infoBoxOutput("Un_comtrade_nz_share" ) 
+                     )
+         )
+      )
+      
+      
+      ## 4.13 Quick glance at both importers and exporters map --------
+      print("--------- Building importer and exporter map -------------")
+      output$UN_comtrade_importer_Map <- 
+         renderHighchart({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            hcmap( data = rv_intelHS$tmp_un_comtrade_importer_map ,
+                   value = 'Value',
+                   joinBy = c('iso-a2','ISO2'), 
+                   name= paste0( "Import value"),
+                   borderWidth = 1,
+                   borderColor = "#fafafa",
+                   nullColor = "lightgrey",
+                   tooltip = list( table = TRUE,
+                                   sort = TRUE,
+                                   headerFormat = '<span style="font-size:13px">{series.name}</span><br/>',
+                                   pointFormat = '{point.name}: <b>${point.value:,.1f} m</b>' )
+            ) %>%
+               hc_add_series(data =  rv_intelHS$tmp_un_comtrade_importer_map ,
+                             type = "mapbubble",
+                             color  = hex_to_rgba("#DF1995", 0.9),
+                             minSize = 0,
+                             name= paste0( "Import value"),
+                             maxSize = 30,
+                             tooltip = list(table = TRUE,
+                                            sort = TRUE,
+                                            headerFormat = '<span style="font-size:13px">{series.name}</span><br/>',
+                                            pointFormat = '{point.name}: <b>${point.z:,.1f} m</b>')
+               ) %>%
+               hc_exporting(enabled = TRUE, formAttributes = list(target = "_blank")) %>%
+               hc_legend( enabled=FALSE ) %>% 
+               hc_mapNavigation(enabled = TRUE) 
+         })
+      
+      ## exporter map
+      output$UN_comtrade_exporter_Map <- 
+         renderHighchart({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports'| input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            hcmap( data = rv_intelHS$tmp_un_comtrade_exporter_map ,
+                   value = 'Value',
+                   joinBy = c('iso-a2','ISO2'), 
+                   name= paste0( "Export value"),
+                   borderWidth = 1,
+                   borderColor = "#fafafa",
+                   nullColor = "lightgrey",
+                   tooltip = list( table = TRUE,
+                                   sort = TRUE,
+                                   headerFormat = '<span style="font-size:13px">{series.name}</span><br/>',
+                                   pointFormat = '{point.name}: <b>${point.value:,.1f} m</b>' )
+            ) %>%
+               hc_add_series(data =  rv_intelHS$tmp_un_comtrade_exporter_map ,
+                             type = "mapbubble",
+                             color  = hex_to_rgba("#97D700", 0.9),
+                             minSize = 0,
+                             name= paste0( "Export value"),
+                             maxSize = 30,
+                             tooltip = list(table = TRUE,
+                                            sort = TRUE,
+                                            headerFormat = '<span style="font-size:13px">{series.name}</span><br/>',
+                                            pointFormat = '{point.name}: <b>${point.z:,.1f} m</b>')
+               ) %>%
+               hc_exporting(enabled = TRUE, formAttributes = list(target = "_blank")) %>%
+               hc_legend( enabled=FALSE ) %>% 
+               hc_mapNavigation(enabled = TRUE) 
+         })
+      
+      ## !!!!! try UI insert: map of importer / exporters ----------- 
+      output$H3_title_un_comtrade_map <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0("Global importers and exporters at a glance")
+         })
+      
+      output$H3_title_un_comtrade_map_note <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0( "The size of bubble area and color both represent the value of imports or exports" ) 
+         })
+      
+      output$H4_title_un_comtrade_importer_map <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0("Global IMPORT markets")
+         })
+      
+      output$H4_title_un_comtrade_exporter_map <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports'| input$select_comodity_for_market_analysis == "" )
+               return(NULL)
+            paste0("Global EXPORT markets")
+         })
+      
+      ## Insert ui here
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd_intl',
+         ui =   div( id = 'ci_intel_by_hs_toadd_un_comtrade_map',
+                     fluidRow(h3( HTML(paste0(textOutput("H3_title_un_comtrade_map"))) ) ,
+                              p( HTML(paste0(textOutput("H3_title_un_comtrade_map_note"))) ),
+                              column(6, div(id = "ci_intel_by_hs_un_comtrade_map_import", h4( HTML(paste0(textOutput("H4_title_un_comtrade_importer_map"))) ), highchartOutput('UN_comtrade_importer_Map') ) ),
+                              column(6, div(id = "ci_intel_by_hs_un_comtrade_map_export", h4( HTML(paste0(textOutput("H4_title_un_comtrade_exporter_map"))) ), highchartOutput('UN_comtrade_exporter_Map') ) )
+                              )
+         )
+      )
+      ## end Try UI insert --------##
+      
+      
+      
+      ## 4.13.1 Sankey plot for a commodity ---------------
+      print("--------- Building Sankey data -------------")
+
+      observe({
+         if( !is.null(input$rbtn_intel_by_hs) &&
+             input$rbtn_intel_by_hs == 'Exports' &&
+             !is.null(rv_intelHS$tmp_hs) ){
+            ## check if able to get sankey data
+            rv_intelHS$Fail_sankey_data <-
+               try(
+                  rv_intelHS$sankey_plot_data <-
+                     get_data_sankey_uncomtrade( cc = as.character(rv_intelHS$tmp_hs), max_year = tmp_un_comtrade_max_year, eu_internal = "No" )
+               )
+
+            if( class(rv_intelHS$Fail_sankey_data) == 'try-error' )
+               print("--------- FAIL: building Sankey data !!! -------------")
+         }
+      })
+      
+      print("--------- Building Sankey plots -------------")
+      output$Sankey_trade_intelHS <-
+         renderSankeyNetwork({
+            if(  is.null(rv_intelHS$tmp_global_by_country_raw) |
+                 length( as.character(rv_intelHS$tmp_hs) )>1 |
+                 class(rv_intelHS$Fail_sankey_data) == 'try-error'|
+                 input$rbtn_intel_by_hs == 'Imports'){
+               return(NULL)
+            }else{
+               print("--------- Plotting Sankey plots -------------")
+               sankey_uncomtrade( cc = as.character(rv_intelHS$tmp_hs), max_year = tmp_un_comtrade_max_year,eu_internal = as.character(input$btn_eu_internal_intelHS)  )
+            }
+         })
+      
+      ## !!!!! try UI insert: Sankey plot ----------- 
+      output$H3_title_sankey_intelHS <-
+         renderText({
+            if( input$rbtn_intel_by_hs == 'Imports' ){
+               return(NULL)
+            }else{
+               if( class(rv_intelHS$Fail_sankey_data) == 'try-error' & 
+                   input$select_comodity_for_market_analysis != "" ){
+                  paste0("Unable to perform global trade flow analyasis due to data query limits. Please wait for a hour.")
+               }
+               
+               if( class(rv_intelHS$Fail_sankey_data) == 'try-error' & 
+                   input$select_comodity_for_market_analysis == "" ){
+                  return(NULL)
+               }
+               
+               if( class(rv_intelHS$Fail_sankey_data) != 'try-error' &
+                   input$select_comodity_for_market_analysis != "" ){
+                  paste0( "Global trade flow analysis" )
+               }
+            }
+            
+            # if( input$rbtn_intel_by_hs == 'EXports' ){
+            #    if( class(rv_intelHS$Fail_sankey_data) == 'try-error' ){
+            #       paste0("Unable to perform global trade flow analyasis due to data query limits. Please wait for a hour.")
+            #    }else{
+            #       #if( is.null(rv_intelHS$tmp_global_by_country_raw) |
+            #        #    length( as.character(rv_intelHS$tmp_hs) )>1 )
+            #         # {return(NULL)}else{
+            #          paste0( "Global trade flow analysis" )
+            #          #}
+            #       
+            #    }
+            #    
+            #    # if( class(rv_intelHS$Fail_sankey_data) != 'try-error' &
+            #    #     is.null(rv_intelHS$tmp_global_by_country_raw) &
+            #    #     length ( as.character(rv_intelHS$tmp_hs) )>1 & 
+            #    #     input$select_comodity_for_market_analysis == "" ) {
+            #    #    return(NULL)
+            #    # }
+            #    # 
+            #    # if( class(rv_intelHS$Fail_sankey_data) != 'try-error' & 
+            #    #     !is.null(rv_intelHS$tmp_global_by_country_raw) &
+            #    #     length ( as.character(rv_intelHS$tmp_hs) ) == 1 &
+            #    #     input$select_comodity_for_market_analysis != ""
+            #    #     ){
+            #    #    paste0( "Global trade flow analysis" )
+            #    #}
+            #    
+            #    # if( class(rv_intelHS$Fail_sankey_data) != 'try-error' &
+            #    #     (is.null(rv_intelHS$tmp_global_by_country_raw) |
+            #    #      length( as.character(rv_intelHS$tmp_hs) )>1 )
+            #    #     )
+            #    #    return(NULL)
+            #    # paste0( "Global trade flow analysis" )
+            # }
+         })
+
+      output$H3_title_sankey_note_intelHS <-
+         renderUI({
+            if( is.null(rv_intelHS$tmp_global_by_country_raw) |
+                length( as.character(rv_intelHS$tmp_hs) )>1 |
+                class(rv_intelHS$Fail_sankey_data) == 'try-error' |
+                input$rbtn_intel_by_hs == 'Imports' )
+               return(NULL)
+            tags$p("This sankey plot shows trade flows of the selected commodity from expoters to importers. The displayed markets coverage is equal to or greater than 90% of global exports. The displayed trade flows are equal to or greater than 0.5% of global exports. Different colors are used to distinguish",
+                   tags$span( "EXPORTERS", style = "color: #97D700; font-weight: bold" ),
+                   ", ",
+                   tags$span( "IMPORTERS", style = "color: #CD5B45; font-weight: bold"),
+                   ", and ",
+                   tags$span( "BOTH", style = "color: #FBE122; font-weight: bold"), "." )
+
+         })
+
+      ## button to choose show/hide EU internal trade
+      output$Btn_EU_Internal_intelHS <-
+         renderUI({
+            if( is.null(rv_intelHS$tmp_global_by_country_raw) |
+                length(  as.character(rv_intelHS$tmp_hs) )>1 |
+                class(rv_intelHS$Fail_sankey_data) == 'try-error'|
+                input$rbtn_intel_by_hs == 'Imports'  )
+               return(NULL)
+            radioButtons("btn_eu_internal_intelHS",
+                         p("Display EU internal trade: " ),
+                         choiceNames = list(icon("check"), icon("times")),
+                         choiceValues = list( "Yes" , "No"),
+                         #c( "Yes" = "Yes", "No" = "No"),
+                         inline=T,
+                         selected="No")
+         })
+
+      output$Btn_EU_Internal_note_intelHS <-
+         renderUI({
+            if( is.null(rv_intelHS$tmp_global_by_country_raw) |
+                length( as.character(rv_intelHS$tmp_hs) )>1 |
+                class(rv_intelHS$Fail_sankey_data) == 'try-error'|
+                input$rbtn_intel_by_hs == 'Imports' )
+               return(NULL)
+            tags$p( "You may choose to show or hide EU internal trade in the sankey plot by using the buttons below." )
+         })
+      
+      ## Insert ui here
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd_intl',
+         ui =   div( id = 'ci_intel_by_hs_toadd_un_comtrade_sankey',
+                     fluidRow(h3( HTML(paste0(textOutput("H3_title_sankey_intelHS"))) ) ,
+                              #p( HTML(paste0(textOutput("H2_title_sankey_note"))) ),
+                              uiOutput("H3_title_sankey_note_intelHS"),
+                              uiOutput("Btn_EU_Internal_note_intelHS"),
+                              uiOutput("Btn_EU_Internal_intelHS"),
+                              sankeyNetworkOutput( "Sankey_trade_intelHS" )
+                     )
+         )
+      )
+      ## end Try UI insert --------##
+      
+      ## 4.14 Generating summary tables for both importers and exporters -------
+      # container of the table -- importers 
+      print("--------- Building importer and exporter tables -------------")
+      sketch_uncomtrade_im<-  htmltools::withTags(table(
+         class = 'display',
+         thead(
+            tr(
+               th(rowspan = 2, 'Market'),
+               th(rowspan = 2, 'Import share'),
+               th(colspan = 3, 'Import value'),
+               th(colspan = 2, 'Import price')
+            ),
+            tr( #th('Country'),
+               lapply(rep(c('Value ($m)', 'CAGR5', 'ABS5'), 1), th, align = 'center'),
+               lapply(rep(c('$/kg (unit)', 'CAGR5' ), 1), th, align = 'center')
+            )
+         )
+      ))
+      
+      ## table for importers
+      output$UN_com_trade_importer_summary <-
+         renderDataTable({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            datatable( rv_intelHS$tmp_un_comtrade_import_summary_tab,
+                      container = sketch_uncomtrade_im,
+                      rownames = FALSE,
+                      extensions = 'Buttons',
+                      options = list(dom = 'Bltp', 
+                                     scrollX = TRUE,
+                                     buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+                                     pageLength = 10,
+                                     lengthMenu = list(c(10, 30 , -1), list('10','30' ,'All')),
+                                     columnDefs = list(list(className = 'dt-center', targets = 0:(ncol(rv_intelHS$tmp_un_comtrade_import_summary_tab)-1) ) )
+                      )
+            ) %>%
+               formatPercentage( c('Share', 'Value_per_change', 'Price_per_change' ) , digit = 1 ) %>%
+               formatCurrency( columns = c('Trade.Value..US..','Value_abs_change'), digits = 0 ) %>%
+               formatCurrency( columns = c('Price'), digits = 2 ) %>%
+               formatStyle(
+                  c('Value_per_change' ),
+                  background = styleColorBar( c(0,max(rv_intelHS$tmp_un_comtrade_import_summary_tab[1:min(20,nrow(rv_intelHS$tmp_un_comtrade_import_summary_tab)),c('Value_per_change' )],na.rm=T)*2) ,
+                                              'lightblue'),
+                  backgroundSize = '100% 90%',
+                  backgroundRepeat = 'no-repeat',
+                  backgroundPosition = 'center',
+                  color = JS("value < 0 ? 'darkred' : value > 0 ? 'darkgreen' : 'black'")
+               ) %>%
+               formatStyle(
+                  c('Price_per_change' ),
+                  background = styleColorBar( c(0,max(rv_intelHS$tmp_un_comtrade_import_summary_tab[1:min(20,nrow(rv_intelHS$tmp_un_comtrade_import_summary_tab)),c('Price_per_change' )],na.rm=T)*2) ,
+                                              'lightblue'),
+                  backgroundSize = '100% 90%',
+                  backgroundRepeat = 'no-repeat',
+                  backgroundPosition = 'center',
+                  color = JS("value < 0 ? 'darkred' : value > 0 ? 'darkgreen' : 'black'")
+               ) %>%
+               formatStyle(
+                  c('Value_abs_change' ),
+                  backgroundSize = '100% 90%',
+                  backgroundRepeat = 'no-repeat',
+                  backgroundPosition = 'center',
+                  color = JS("value < 0 ? 'darkred' : value > 0 ? 'darkgreen' : 'black'")
+               ) %>%
+               formatStyle( 1:ncol(rv_intelHS$tmp_un_comtrade_import_summary_tab), 'vertical-align'='center', 'text-align' = 'center' )
+         })
+      
+      ### build export table
+      # container of the table -- importers 
+      sketch_uncomtrade_ex <-  htmltools::withTags(table(
+         class = 'display',
+         thead(
+            tr(
+               th(rowspan = 2, 'Market'),
+               th(rowspan = 2, 'Export share'),
+               th(colspan = 3, 'Export value'),
+               th(colspan = 2, 'Export price')
+            ),
+            tr( #th('Country'),
+               lapply(rep(c('Value ($m)', 'CAGR5', 'ABS5'), 1), th, align = 'center'),
+               lapply(rep(c('$/kg (unit)', 'CAGR5' ), 1), th, align = 'center')
+            )
+         )
+      ))
+      
+      ## table for importers
+      output$UN_com_trade_exporter_summary <-
+         renderDataTable({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            datatable( rv_intelHS$tmp_un_comtrade_export_summary_tab,
+                       container = sketch_uncomtrade_ex,
+                       rownames = FALSE,
+                       extensions = 'Buttons',
+                       options = list(dom = 'Bltp', 
+                                      scrollX = TRUE,
+                                      buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+                                      pageLength = 10,
+                                      lengthMenu = list(c(10, 30, -1), list('10', '30' ,'All')),
+                                      columnDefs = list(list(className = 'dt-center', targets = 0:(ncol(rv_intelHS$tmp_un_comtrade_export_summary_tab)-1) ) )
+                       )
+            ) %>%
+               formatPercentage( c('Share', 'Value_per_change', 'Price_per_change' ) , digit = 1 ) %>%
+               formatCurrency( columns = c('Trade.Value..US..','Value_abs_change'), digits = 0 ) %>%
+               formatCurrency( columns = c('Price'), digits = 2 ) %>%
+               formatStyle(
+                  c('Value_per_change' ),
+                  background = styleColorBar( c(0,max(rv_intelHS$tmp_un_comtrade_export_summary_tab[1:min(20,nrow(rv_intelHS$tmp_un_comtrade_export_summary_tab)),c('Value_per_change' )],na.rm=T)*2) ,
+                                              'lightblue'),
+                  backgroundSize = '100% 90%',
+                  backgroundRepeat = 'no-repeat',
+                  backgroundPosition = 'center',
+                  color = JS("value < 0 ? 'darkred' : value > 0 ? 'darkgreen' : 'black'")
+               ) %>%
+               formatStyle(
+                  c('Price_per_change' ),
+                  background = styleColorBar( c(0,max(rv_intelHS$tmp_un_comtrade_export_summary_tab[1:min(20,nrow(rv_intelHS$tmp_un_comtrade_export_summary_tab)),c('Price_per_change' )],na.rm=T)*2) ,
+                                              'lightblue'),
+                  backgroundSize = '100% 90%',
+                  backgroundRepeat = 'no-repeat',
+                  backgroundPosition = 'center',
+                  color = JS("value < 0 ? 'darkred' : value > 0 ? 'darkgreen' : 'black'")
+               ) %>%
+               formatStyle(
+                  c('Value_abs_change' ),
+                  backgroundSize = '100% 90%',
+                  backgroundRepeat = 'no-repeat',
+                  backgroundPosition = 'center',
+                  color = JS("value < 0 ? 'darkred' : value > 0 ? 'darkgreen' : 'black'")
+               ) %>%
+               formatStyle( 1:ncol(rv_intelHS$tmp_un_comtrade_export_summary_tab), 'vertical-align'='center', 'text-align' = 'center' )
+         })
+      
+      ## Insert ui here: summary tables  ----------------
+      output$H3_title_un_comtrade_summary_tab <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0("Summary tables for importers and exporters")
+         })
+      
+      
+      output$H4_title_un_comtrade_importer_sum_tab <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0("Global IMPORT markets")
+         })
+      
+      output$H4_title_un_comtrade_exporter_sum_tab <-
+         renderText({
+            if( is.null(input$HSCodeTable_rows_selected) | is.null(rv_intelHS$tmp_global_by_country_raw) | input$rbtn_intel_by_hs == 'Imports' | input$select_comodity_for_market_analysis == "")
+               return(NULL)
+            paste0("Global EXPORT markets")
+         })
+      
+      insertUI(
+         selector = '#ci_intel_by_hs_toadd_intl',
+         ui =   div( id = 'ci_intel_by_hs_toadd_un_comtrade_summary_tab',
+                     fluidRow(h3( HTML(paste0(textOutput("H3_title_un_comtrade_summary_tab"))) ) ,
+                              #p( HTML(paste0(textOutput("H3_title_un_comtrade_map_note"))) ),
+                              column(6, div(id = "ci_intel_by_hs_un_comtrade_import_summary_tab", h4( HTML(paste0(textOutput("H4_title_un_comtrade_importer_sum_tab"))) ), dataTableOutput('UN_com_trade_importer_summary') ) ),
+                              column(6, div(id = "ci_intel_by_hs_un_comtrade_export_summary_tab", h4( HTML(paste0(textOutput("H4_title_un_comtrade_exporter_sum_tab"))) ), dataTableOutput('UN_com_trade_exporter_summary') ) )
+                     )
+         )
+      )
+      ## end Try UI insert --------##
+      
+      
+      
+      ## 4.14.1 Get the leftover quota and reset time ---------
+      output$Un_comtrade_msg_intelHS <-
+         renderUI({
+            if(  is.null(input$HSCodeTable_rows_selected) | 
+                 input$select_comodity_for_market_analysis == "" | 
+                 input$rbtn_intel_by_hs == 'Imports'){
+               return(NULL)
+            }else{
+               tags$div(
+                  tags$hr(),
+                  tags$p(paste0( "Note: ",ct_get_remaining_hourly_queries(), 
+                                 " number of queries are left for the global analysis section from the UN Comtrade. The reset time will be at ", 
+                                 ct_get_reset_time() ,
+                                 ", while the current time is ", format(Sys.time()) , "."
+                             ))
+               )
+            }
+         })
+      
+      insertUI( selector = '#ci_intel_by_hs_toadd_intl',
+                ui = div( id = 'ci_intel_by_hs_toadd_un_comtrade_msg',
+                          fluidRow( uiOutput("Un_comtrade_msg_intelHS") ) )
+              )
+      
+      ## 4.15 Hide generating report message ----------
+      observe({
+         try(
+            #if( !is.null( rv_intelHS$tmp_dtf_market_map ) ){
+            if( !is.null(rv_intelHS$tmp_tab) | 
+                !is.null(input$select_comodity_for_market_analysis) |
+                !is.null(input$HSCodeTable_rows_selected) ){
+               shinyjs::hide( id = "ci_intel_hs_loading_message" )
+            }
+         )
+      })
+      
+      observe({
+         try(
+            if( !is.null( rv_intelHS$tmp_dtf_market_map ) ){
+               #if( !is.null(rv_intelHS$tmp_tab) ){
+               shinyjs::hide( id = "ci_intel_hs_loading_message_intl" )
+            }
+         )
+      })
+      
+      
+      ## IV. Appendix .......  Reset buttions -------------------------
+      ## 1. reset btn for Commodity intelligence Exports --------------------
+      observeEvent( input$btn_reset_ci_ex,
+                    {
+                       ### try remove UI -- when pre-defined HS
+                       removeUI( selector = '#body_ex_line_value_percent')
+                       removeUI( selector = '#body_ex_growth_tab')
+                       removeUI( selector = '#body_ci_markets_ex_selector')
+                       removeUI( selector = '#body_ci_markets_ex_map')
+                       removeUI( selector = '#body_ci_markets_ex_top')
+                       removeUI( selector = '#body_ci_markets_ex_growth')
+                       removeUI( selector = '#body_appendix_hs_ex')
+                       removeUI( selector = '#body_ci_markets_ex_fail_msg')
+                       removeUI( selector = '#body_ci_markets_ex_global_facts')
+                       removeUI( selector = '#body_ci_markets_ex_un_comtrade_map')
+                       removeUI( selector = '#body_ci_markets_ex_un_comtrade_sankey')
+                       removeUI( selector = '#body_ci_markets_ex_un_comtrade_summary_tab')
+                       removeUI( selector = '#body_ci_markets_ex_un_comtrade_msg')
+                       shinyjs::hide( id = "body_ci_market_loading_message" )
+                       
+                       ### remove UI -- when self_defined HS
+                       removeUI( selector = '#body_ex_line_value_percent_self_defined')
+                       removeUI( selector = '#body_ex_growth_tab_self_defined')
+                       removeUI( selector = '#body_ci_markets_ex_selector_self_defined')
+                       removeUI( selector = '#body_selected_ex_line_value_percent_self_defined')
+                       removeUI( selector = '#body_ci_markets_ex_map_self_defined')
+                       removeUI( selector = '#body_ci_markets_ex_top_self_defined')
+                       removeUI( selector = '#body_ci_markets_ex_growth_self_defined')
+                       removeUI( selector = '#body_appendix_hs_ex_self_defined')
+                       removeUI( selector = '#body_ci_markets_ex_fail_msg_self_define')
+                       removeUI( selector = '#body_ci_markets_ex_global_facts_self_define')
+                       removeUI( selector = '#body_ci_markets_ex_un_comtrade_map_self_define')
+                       removeUI( selector = '#body_ci_markets_ex_un_comtrade_sankey_self_define')
+                       removeUI( selector = '#body_ci_markets_ex_un_comtrade_summary_tab_self_define')
+                       removeUI( selector = '#body_ci_markets_ex_un_comtrade_msg_self_define')
+                       shinyjs::hide( id = "body_ci_market_loading_message_self_define" )
+                       
+                       ### clear all outputs
+                       output$HS_ex <- renderDataTable(NULL)
+                       output$HS_pre_ex <- renderDataTable(NULL)
+                       output$CIExportValueLine <- renderHighchart(highchart())
+                       output$CIExportPercentLine <- renderHighchart(highchart())
+                       output$MapEXMarket <- renderHighchart(highchart())
+                       output$GrowthTabSelectedEx <- renderDataTable(NULL)
+                       output$SelectedExMarketLine <- renderHighchart(highchart())
+                       output$SelectedExMarketLinePercent <- renderHighchart(highchart())
+                       output$SelectedExMarketGrowthTab <- renderDataTable(NULL)
+                       
+                       ## hide all ids
+                       #shinyjs::hide(selector = '#body_ex')
+                       #shinyjs::hide(selector = '#body_value_ex')
+                       #shinyjs::hide(selector = '#body_percent_ex')
+                       #shinyjs::hide(selector = '#body_growth_ex')
+                       #shinyjs::hide(selector = '#body_ci_markets_ex')
+                       #shinyjs::hide(selector = '#body_appendix_hs_ex')
+                       shinyjs::show(id = 'ci_howto_ex')
+                       shinyjs::reset('sidebar_ci_exports')
+                       ## disable the buttone ---
+                       shinyjs::enable("btn_build_commodity_report_ex")
+                       shinyjs::enable("select_comodity_ex")
+                       shinyjs::enable("file_comodity_ex")
+                       shinyjs::enable("rbtn_prebuilt_diy_ex")
+                       
+                     }
+                    )
+      
+      ## 2. reset btn for Commodity intelligence Imports --------
+      observeEvent( input$btn_reset_ci_im,
+                    {
+                       ### try remove UI -- when pre-defined HS
+                       removeUI( selector = '#body_im_line_value_percent')
+                       removeUI( selector = '#body_im_growth_tab')
+                       removeUI( selector = '#body_ci_markets_im_selector')
+                       removeUI( selector = '#body_ci_markets_im_map')
+                       removeUI( selector = '#body_ci_markets_im_top')
+                       removeUI( selector = '#body_ci_markets_im_growth')
+                       removeUI( selector = '#body_appendix_hs_im')
+                       
+                       ### remove UI -- when self_defined HS
+                       removeUI( selector = '#body_im_line_value_percent_self_defined')
+                       removeUI( selector = '#body_im_growth_tab_self_defined')
+                       removeUI( selector = '#body_ci_markets_im_selector_self_defined')
+                       removeUI( selector = '#body_selected_im_line_value_percent_self_defined')
+                       removeUI( selector = '#body_ci_markets_im_map_self_defined')
+                       removeUI( selector = '#body_ci_markets_im_top_self_defined')
+                       removeUI( selector = '#body_ci_markets_im_growth_self_defined')
+                       removeUI( selector = '#body_appendix_hs_im_self_defined')
+                       
+                       ### clear all outputs
+                       output$HS_im <- renderDataTable(NULL)
+                       output$HS_pre_im <- renderDataTable(NULL)
+                       output$CIImportValueLine <- renderHighchart(highchart())
+                       output$CIImportPercentLine <- renderHighchart(highchart())
+                       output$MapIMMarket <- renderHighchart(highchart())
+                       output$GrowthTabSelectedIm <- renderDataTable(NULL)
+                       output$SelectedImMarketLine <- renderHighchart(highchart())
+                       output$SelectedImMarketLinePercent <- renderHighchart(highchart())
+                       output$SelectedImMarketGrowthTab <- renderDataTable(NULL)
+                       
+                       ## hide all ids
+                       # shinyjs::hide(selector = '#body_im')
+                       # shinyjs::hide(selector = '#body_value_im')
+                       # shinyjs::hide(selector = '#body_percent_im')
+                       # shinyjs::hide(selector = '#body_growth_im')
+                       # shinyjs::hide(selector = '#body_ci_markets_im')
+                       # shinyjs::hide(selector = '#body_appendix_hs_im')
+                       shinyjs::show(id = 'ci_howto_im')
+                       shinyjs::reset('sidebar_ci_imports') 
+                       ## enable the buttone ---
+                       shinyjs::enable("btn_build_commodity_report_im")
+                       shinyjs::enable("select_comodity_im")
+                       shinyjs::enable("file_comodity_im")
+                       shinyjs::enable("rbtn_prebuilt_diy_im")
+                       
+                     }
+                    )
+      
+      ## 3. reset btn for Country intelligence ------------
+      observeEvent( input$btn_reset_cr,
+                    {
+                       ## remove UIs 
+                       removeUI( selector = "#country_name_single_or_multiple" )
+                       removeUI( selector = "#country_info_table_map" )
+                       removeUI( selector = "#country_trade_summary_all_items" )
+                       removeUI( selector = "#country_trade_summary_appendix" )
+                       
+                       ## clear all output
+                       output$CountryTable <- renderDataTable(NULL)
+                       output$MapSelectedCountry <- renderHighchart(highchart())
+                       output$CountryTradeTableTotal <- renderDataTable(NULL)
+                       output$CountryTwowayTradeGraphTotal <- renderHighchart(highchart())
+                       output$CountryTradeBalanceGraphTotal <- renderHighchart(highchart())
+                       output$CountryExportsGraphTotal <- renderHighchart(highchart())
+                       output$CountryExportsGraphTotalPercent <- renderHighchart(highchart())
+                       output$CountryImportsGraphTotal <- renderHighchart(highchart())
+                       output$CountryImportsGraphTotalPercent <- renderHighchart(highchart())
+                       output$KeyExCountryTotalTreeMap <- renderHighchart(highchart())
+                       output$KeyImCountryTotalTreeMap <- renderHighchart(highchart())
+                       output$KeyExCountryTotalLine <- renderHighchart(highchart())
+                       output$KeyExCountryTotalLinePercent <- renderHighchart(highchart())
+                       output$KeyImCountryTotalLine <- renderHighchart(highchart())
+                       output$CountrySummaryAllExports <- renderDataTable(NULL)
+                       output$CountrySummaryAllImports <- renderDataTable(NULL)
+                       output$CountrySummaryAllTwowayBalance  <- renderDataTable(NULL)
+
+                       
+                       output$SelectedMarketSingle <- renderText(NULL)
+                       output$SelectedMarketMultiple <-renderText(NULL)
+                          
+                       ## hide all ids
+                       shinyjs::show(id = 'country_howto')
+                       #shinyjs::hide(id = 'country_basic_info')
+                       #shinyjs::hide(id = 'country_trade_summary')
+                       #shinyjs::hide(id = 'country_trade_summary_individual')
+                       #shinyjs::hide(id = "country_trade_summary_appendix")
+                       #shinyjs::hide(id = "country_single_name")
+                       #shinyjs::hide(id = "country_multiple_name")
+                       # shinyjs::hide(id = 'country_trade_single')
+                       reset('sidebar_cr')
+                       ## ensable a button
+                       shinyjs::enable("btn_build_country_report")
+                       shinyjs::enable("select_country")
+                    }
+                  )
+      # withProgress(message = 'Finishing in about 10s', value = 1, {
+      #    # Increment the progress bar, and update the detail text.
+      #    incProgress( 1, detail = NULL)
+      #    Sys.sleep(3)
+      #    
+      # })
+
+      ## Financial benchmarking tab (from app.R port) -------------------
+      fin_values <- reactiveValues(
+         corp_df = NULL,
+         df_dart = NULL,
+         df_my = NULL,
+         df_my_norm = NULL,
+         fc_result = NULL,
+         corp_real_loaded = FALSE
+      )
+
+      fin_validate <- shiny::validate
+      fin_need <- shiny::need
+
+      fin_ensure_corp_df <- function(force_reload = FALSE) {
+         if (!force_reload && !is.null(fin_values$corp_df) && nrow(fin_values$corp_df) > 0 && fin_values$corp_real_loaded) return()
+         corp_path <- fin_find_corp_codes_path()
+         if (!is.null(corp_path)) {
+            df <- tryCatch(
+               fin_get_corp_codes("", corp_path),
+               error = function(e) {
+                  showNotification("corp_codes.csv 읽기 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
+                  NULL
+               }
+            )
+            if (!is.null(df)) {
+               fin_values$corp_df <- df
+               fin_values$corp_real_loaded <- TRUE
+               return()
+            }
+         }
+         api_key <- fin_load_api_key()
+         if (!is.null(api_key) && nzchar(api_key)) {
+            df <- tryCatch(
+               fin_get_corp_codes(api_key),
+               error = function(e) {
+                  showNotification("DART corpCode 조회 실패: 데모 리스트로 대체합니다.", type = "error", duration = 6)
+                  NULL
+               }
+            )
+            if (!is.null(df)) {
+               fin_values$corp_df <- df
+               fin_values$corp_real_loaded <- TRUE
+               return()
+            }
+         } else if (is.null(corp_path)) {
+            showNotification("DART_API_KEY가 없어 corp_codes.csv를 불러오지 못했습니다. 데모 리스트로 대체합니다.", type = "warning", duration = 5)
+         }
+         fin_values$corp_df <- fin_demo_corp_codes()
+         fin_values$corp_real_loaded <- FALSE
+      }
+
+      # 기본적으로 데모 데이터를 미리 채워서 화면이 비어 보이지 않도록 함
+      observeEvent(TRUE, {
+         if (is.null(fin_values$df_dart) && is.null(fin_values$df_my_norm)) {
+            fin_values$df_dart <- fin_sample_dart_financials(corp_name = "상장사(데모)")
+            fin_values$df_my_norm <- fin_sample_my_company()
+            fin_values$fc_result <- NULL
+         }
+      }, once = TRUE)
+
+      fin_find_corp_codes_path <- function() {
+         for (p in c("corp_codes.csv", file.path("nz-trade-dash", "corp_codes.csv"))) {
+            if (file.exists(p)) return(p)
+         }
+         NULL
+>>>>>>> main
       }
       setProgress(0.6, detail = "이름/종목코드 필터링 중")
       hits <- fin_search_corp_smart(df, query)
@@ -519,6 +2774,7 @@ server <- function(input, output, session) {
         corp_nm <- picked$corp_name
         selected_code <- picked$corp_code
       }
+<<<<<<< HEAD
     }
     api_key <- fin_load_api_key()
     if (is.null(api_key) || !nzchar(api_key)) {
@@ -639,6 +2895,235 @@ server <- function(input, output, session) {
         roa = if_else(!is.na(.data$net_income) & !is.na(.data$total_assets) & .data$total_assets != 0, .data$net_income / .data$total_assets, NA_real_)
       )
   })
+=======
+
+      observe({
+         if (is.null(fin_values$corp_df) || !fin_values$corp_real_loaded) {
+            fin_ensure_corp_df(force_reload = TRUE)
+         }
+      })
+
+      observeEvent(fin_values$corp_df, {
+         df <- fin_values$corp_df
+         if (is.null(df) || nrow(df) == 0) return()
+         choices <- fin_make_corp_choices(head(df, 15))
+         updateSelectInput(session, "fin_corp_pick", choices = choices, selected = choices[[1]])
+      })
+
+      observeEvent(input$fin_corp_search, {
+         fin_ensure_corp_df(force_reload = !fin_values$corp_real_loaded)
+         query <- if (is.null(input$fin_corp_query)) "" else trimws(input$fin_corp_query)
+         if (!nzchar(query)) {
+            showNotification("검색어를 입력하세요.", type = "warning", duration = 3)
+            return()
+         }
+         if (is.null(fin_values$corp_df) || nrow(fin_values$corp_df) == 0) {
+            showNotification("기업 리스트가 준비되지 않았습니다. 잠시 후 다시 시도하거나 데모를 사용하세요.", type = "error", duration = 4)
+            return()
+         }
+         withProgress(message = "검색 중...", value = 0.1, {
+            if (!fin_values$corp_real_loaded) {
+               setProgress(0.25, detail = "기업 리스트를 새로 불러오는 중")
+               fin_ensure_corp_df(force_reload = TRUE)
+            }
+            df <- fin_values$corp_df
+            if (is.null(df) || nrow(df) == 0) {
+               showNotification("기업 리스트가 없습니다. 데모/키 설정을 확인하세요.", type = "error", duration = 5)
+               return()
+            }
+            setProgress(0.6, detail = "이름/종목코드 필터링 중")
+            hits <- fin_search_corp_smart(df, query, limit = 200)
+            hits <- hits %>%
+               arrange(desc(!is.na(.data$stock_code) & nzchar(.data$stock_code)), .data$corp_name)
+            if (nrow(hits) == 0) {
+               showNotification("검색 결과가 없습니다.", type = "warning", duration = 4)
+               return()
+            }
+            choices <- fin_make_corp_choices(hits)
+            updateSelectInput(session, "fin_corp_pick", choices = choices, selected = choices[[1]])
+            showNotification(paste0("검색 결과 ", length(choices), "건을 찾았습니다."), type = "message", duration = 3)
+            setProgress(1)
+         })
+      })
+
+   observeEvent(input$fin_fetch_dart, {
+      fin_ensure_corp_df()
+      selected_code <- if (!is.null(input$fin_corp_pick) && nzchar(input$fin_corp_pick)) input$fin_corp_pick else NA_character_
+      selected_code <- trimws(selected_code)
+      if (is.na(selected_code)) {
+         showNotification("상장사를 먼저 선택하세요.", type = "warning", duration = 4)
+         return()
+      }
+         corp_nm <- "상장사"
+         if (!is.null(fin_values$corp_df)) {
+            picked <- fin_values$corp_df %>%
+               filter(.data$corp_code == selected_code | .data$corp_name == selected_code) %>%
+               slice_head(n = 1)
+            if (nrow(picked)) {
+               corp_nm <- picked$corp_name
+               selected_code <- picked$corp_code
+            }
+         }
+         api_key <- fin_load_api_key()
+         if (is.null(api_key) || !nzchar(api_key)) {
+            showNotification("DART_API_KEY를 설정하세요. 데모 데이터를 사용합니다.", type = "warning", duration = 5)
+            fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
+            fin_values$fc_result <- NULL
+            return()
+         }
+         if (nrow(picked) && (is.na(picked$stock_code) || !nzchar(picked$stock_code))) {
+            showNotification("비상장/종목코드가 없는 기업입니다. DART 데이터가 없을 수 있습니다.", type = "warning", duration = 6)
+         }
+         years <- seq(2015, as.integer(format(Sys.Date(), "%Y")))
+      withProgress(message = paste0("DART 재무제표 불러오는 중: ", corp_nm), value = 0.2, {
+            res <- tryCatch(
+               fin_fetch_dart_financials(api_key, selected_code, corp_nm, years),
+               error = function(e) {
+                  showNotification(paste("DART 요청 실패:", conditionMessage(e)), type = "error", duration = 8)
+                  NULL
+               }
+            )
+            df <- if (!is.null(res)) res$data else NULL
+            status <- if (!is.null(res)) res$status else NULL
+            if (is.null(df) || nrow(df) == 0) {
+               fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
+               fin_values$fc_result <- NULL
+               detail <- if (!is.null(status)) {
+                  fails <- status %>% filter(!.data$ok)
+                  msgs <- unique(fails$message)
+                  paste(
+                     if (nrow(fails)) paste0("실패 연도: ", paste(fails$year, collapse = ", ")) else "",
+                     if (length(msgs) && nzchar(msgs[1])) paste0("메시지: ", paste(msgs, collapse = " / ")) else ""
+                  )
+               } else ""
+               msg <- paste("DART 불러오기 실패: 데모 데이터로 대체합니다.", detail)
+               showNotification(msg, type = "warning", duration = 6)
+            } else {
+               fin_values$df_dart <- df
+               fin_values$fc_result <- NULL
+               dropped <- NULL
+               drop_msgs <- NULL
+               if (!is.null(status)) {
+                  fails <- status %>% filter(!.data$ok)
+                  if (nrow(fails)) dropped <- paste(fails$year, collapse = ", ")
+                  msgs <- unique(fails$message)
+                  if (length(msgs) && nzchar(msgs[1])) drop_msgs <- paste(msgs, collapse = " / ")
+               }
+               if (is.null(dropped)) {
+                  showNotification("DART 데이터가 업데이트되었습니다.", type = "message", duration = 4)
+               } else {
+                  msg <- paste0("DART 업데이트: ", dropped, " 연도는 누락됨")
+                  if (!is.null(drop_msgs)) msg <- paste(msg, " - ", drop_msgs)
+                  showNotification(msg, type = "warning", duration = 8)
+               }
+            }
+            setProgress(1)
+         })
+      })
+
+      observeEvent(input$fin_load_demo, {
+         fin_values$df_dart <- fin_sample_dart_financials(corp_name = "상장사(데모)")
+         fin_values$df_my_norm <- fin_sample_my_company()
+         fin_values$fc_result <- NULL
+         showNotification("데모 데이터가 로드되었습니다.", type = "message", duration = 4)
+      })
+
+      observeEvent(input$fin_upload, {
+         req(input$fin_upload$datapath)
+         df <- fin_read_upload_df(input$fin_upload$datapath)
+         cols <- names(df)
+         year_col <- fin_guess_col(cols, c("yeondo", "year", "년도"))
+         sales_col <- fin_guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"))
+         inv_col <- fin_guess_col(cols, c("jaego", "inv", "inventory", "재고"))
+         net_col <- fin_guess_col(cols, c("dang_gisun_iig", "net_income", "income", "순이익"))
+         asset_col <- fin_guess_col(cols, c("total_assets", "assets", "자산", "maechul_wonga_cogs"))
+         cogs_col <- fin_guess_col(cols, c("cogs", "wonga", "매출원가", "maechul_wonga_cogs"))
+         output$fin_mapping_ui <- renderUI({
+            tagList(
+               selectInput("fin_col_year", "연도 컬럼", choices = cols, selected = year_col),
+               selectInput("fin_col_sales", "매출액 컬럼", choices = cols, selected = sales_col),
+               selectInput("fin_col_inventory", "재고자산 컬럼", choices = cols, selected = inv_col),
+               selectInput("fin_col_net_income", "당기순이익 컬럼(선택)", choices = c("", cols), selected = net_col),
+               selectInput("fin_col_assets", "자산총계 컬럼(선택)", choices = c("", cols), selected = asset_col),
+               selectInput("fin_col_cogs", "매출원가 컬럼(선택)", choices = c("", cols), selected = cogs_col)
+            )
+         })
+         fin_values$df_my <- df
+         fin_values$fc_result <- NULL
+      })
+
+      observeEvent(list(input$fin_col_year, input$fin_col_sales, input$fin_col_inventory,
+                        input$fin_col_net_income, input$fin_col_assets, input$fin_col_cogs), {
+         req(fin_values$df_my)
+         df <- fin_values$df_my
+         get_num <- function(col) as.numeric(gsub(",", "", df[[col]]))
+         res <- tibble(
+            year = df[[input$fin_col_year]],
+            sales = get_num(input$fin_col_sales),
+            inventory = get_num(input$fin_col_inventory),
+            net_income = if (nzchar(input$fin_col_net_income)) get_num(input$fin_col_net_income) else NA_real_,
+            total_assets = if (nzchar(input$fin_col_assets)) get_num(input$fin_col_assets) else NA_real_,
+            cogs = if (nzchar(input$fin_col_cogs)) get_num(input$fin_col_cogs) else NA_real_,
+            source = "My Company"
+         ) %>%
+            mutate(year = as.integer(.data$year))
+         fin_values$df_my_norm <- res
+         fin_values$fc_result <- NULL
+      }, ignoreNULL = FALSE)
+
+      fin_combined_df <- reactive({
+         rows <- list(fin_values$df_dart, fin_values$df_my_norm)
+         rows <- lapply(rows, function(x) if (is.null(x)) tibble(year = integer(), sales = numeric(), inventory = numeric(), net_income = numeric(), total_assets = numeric(), cogs = numeric(), source = character()) else x)
+        bind_rows(rows) %>%
+           filter(!is.na(.data$year)) %>%
+           group_by(.data$source, .data$year) %>%
+           summarize(
+              sales = sum(.data$sales, na.rm = TRUE),
+              inventory = sum(.data$inventory, na.rm = TRUE),
+              net_income = sum(.data$net_income, na.rm = TRUE),
+              total_assets = sum(.data$total_assets, na.rm = TRUE),
+              cogs = sum(.data$cogs, na.rm = TRUE),
+              .groups = "drop"
+           ) %>%
+           mutate(
+               inventory_turnover = dplyr::case_when(
+                  is.finite(.data$cogs) & is.finite(.data$inventory) & .data$inventory != 0 ~ .data$cogs / .data$inventory,
+                  is.finite(.data$sales) & is.finite(.data$inventory) & .data$inventory != 0 ~ .data$sales / .data$inventory,
+                  TRUE ~ NA_real_
+               ),
+               roa = if_else(!is.na(.data$net_income) & !is.na(.data$total_assets) & .data$total_assets != 0, .data$net_income / .data$total_assets, NA_real_)
+           )
+     })
+
+      observeEvent(fin_combined_df(), {
+         df_all <- fin_combined_df()
+         if (is.null(df_all) || nrow(df_all) < 3) return()
+         chosen_source <- fin_pick_source(df_all)
+         if (is.null(chosen_source)) return()
+         df <- df_all %>% filter(.data$source == chosen_source)
+         if (nrow(df) < 3) return()
+         if (is.null(fin_values$fc_result)) {
+            horizon <- if (!is.null(input$fin_forecast_y)) {
+               max(1L, min(5L, as.integer(input$fin_forecast_y)))
+            } else {
+               3L
+            }
+            fin_values$fc_result <- fin_safe_prophet(df, horizon, source_name = chosen_source)
+         }
+      })
+
+      fin_forecast_result <- reactive({
+         res <- fin_values$fc_result
+         fin_validate(fin_need(!is.null(res) && !is.null(res$forecast) && nrow(res$forecast) > 0,
+                               "예측 결과가 없습니다. '예측 실행'을 눌러주세요."))
+         res
+      })
+
+      pred_focus_source <- reactive({
+         res <- fin_forecast_result()
+         if (!is.null(res$source)) res$source else "선택된 소스"
+      })
+>>>>>>> main
 
   ## KPI value boxes (공통) -----------------------------------
   output$fin_kpi_sales <- renderValueBox({
@@ -734,6 +3219,7 @@ server <- function(input, output, session) {
     )
   })
 
+<<<<<<< HEAD
   output$fin_ts_plot <- renderPlotly({
     df <- fin_combined_df()
     fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
@@ -743,6 +3229,801 @@ server <- function(input, output, session) {
         yaxis = list(title = "매출액", tickformat = "~s")
       )
   })
+=======
+      output$fin_fc_table <- renderTable({
+         res <- fin_forecast_result()
+         res$forecast
+      })
+
+      output$fin_fc_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         df_all <- fin_combined_df()
+         fin_validate(fin_need(nrow(df_all) > 0, "데이터를 불러오세요"))
+         src <- if (!is.null(res$source)) res$source else fin_pick_source(df_all)
+         actual <- df_all %>%
+            filter(.data$source == src) %>%
+            arrange(.data$year) %>%
+            transmute(year, value = sales)
+         fin_validate(fin_need(nrow(actual) > 0, "예측을 위한 실측값이 없습니다."))
+         fc <- res$forecast
+         last_year <- max(actual$year, na.rm = TRUE)
+         y_min <- min(c(actual$value, fc$yhat_lower), na.rm = TRUE)
+         y_max <- max(c(actual$value, fc$yhat_upper), na.rm = TRUE)
+         plot_ly() %>%
+            add_trace(
+               data = actual, x = ~year, y = ~value,
+               type = "scatter", mode = "lines+markers",
+               name = paste0(src, " 실제")
+            ) %>%
+            add_trace(
+               data = fc, x = ~year, y = ~yhat,
+               type = "scatter", mode = "lines+markers",
+               name = paste0(src, " 예측")
+            ) %>%
+            add_ribbons(
+               data = fc, x = ~year, ymin = ~yhat_lower, ymax = ~yhat_upper,
+               name = "예측 구간",
+               fillcolor = "rgba(68, 114, 196, 0.2)",
+               line = list(color = "transparent")
+            ) %>%
+            layout(
+               yaxis = list(title = "매출액"),
+               xaxis = list(title = "연도"),
+               shapes = list(list(
+                  type = "line", x0 = last_year, x1 = last_year,
+                  y0 = y_min, y1 = y_max,
+                  xref = "x", yref = "y",
+                  line = list(dash = "dash", color = "gray")
+               )),
+               annotations = list(list(
+                  x = last_year, y = y_max,
+                  text = "예측 시작",
+                  showarrow = TRUE, arrowhead = 2, ax = 20, ay = -40,
+                  bgcolor = "white"
+               ))
+            )
+      })
+
+      observeEvent(input$fin_do_forecast, {
+         df_all <- fin_combined_df()
+         fin_validate(fin_need(nrow(df_all) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
+         chosen_source <- fin_pick_source(df_all)
+         df <- df_all %>% filter(.data$source == chosen_source)
+         fin_validate(fin_need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
+         last_year <- max(df$year, na.rm = TRUE)
+         horizon <- min(as.integer(input$fin_forecast_y), max(0, 2030L - last_year))
+         if (is.na(horizon) || horizon < 1) {
+            showNotification("최근 연도가 2030 이상이라 예측이 없습니다.", type = "warning", duration = 5)
+            return()
+         }
+         fin_values$fc_result <- fin_safe_prophet(df, horizon, source_name = chosen_source)
+         showNotification("예측이 업데이트되었습니다.", type = "message", duration = 4)
+      })
+
+      analysis_df <- reactive({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터가 비어 있어요. 오른쪽 '데모 데이터 로드'나 업로드를 이용해 바로 채워보세요."))
+         df
+      })
+
+      analysis_focus_source <- reactive({
+         df <- analysis_df()
+         if (any(df$source == "My Company")) "My Company" else fin_pick_source(df)
+      })
+
+      analysis_quality_checks <- reactive({
+         df <- fin_combined_df()
+         msgs <- c()
+         if (nrow(df) < 3) msgs <- c(msgs, "연도별 데이터가 3개 미만이라 추세 읽기가 어려워요. 최근 3년 이상을 넣어주세요.")
+         num_missing <- sum(!is.finite(df$sales)) + sum(!is.finite(df$inventory))
+         if (num_missing > 0) msgs <- c(msgs, "매출/재고에 빈칸이 있어요. 업로드 파일을 다시 확인해주세요.")
+         zero_years <- df %>% filter(.data$sales <= 0 | .data$inventory <= 0) %>% pull(.data$year) %>% unique()
+         if (length(zero_years)) msgs <- c(msgs, paste0("매출 또는 재고가 0 이하인 연도: ", paste(sort(zero_years), collapse = ", ")))
+         msgs
+      })
+
+      output$analysis_quality <- renderUI({
+         msgs <- analysis_quality_checks()
+         if (length(msgs) == 0) return(HTML("<p><strong>데이터 품질:</strong> 주요 결함 없음</p>"))
+         HTML(paste0("<p><strong>데이터 품질 경고:</strong></p><ul>", paste(sprintf("<li>%s</li>", msgs), collapse = ""), "</ul>"))
+      })
+
+      output$analysis_top3 <- renderUI({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오면 요약이 여기에 표시됩니다."))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+
+         by_source <- latest %>%
+            group_by(.data$source) %>%
+            summarize(sales = sum(.data$sales, na.rm = TRUE), .groups = "drop") %>%
+            arrange(desc(.data$sales))
+         leader_msg <- NULL
+         if (nrow(by_source) > 0) {
+            leader <- by_source %>% slice_head(n = 1)
+            sales_txt <- scales::label_number(scale_cut = scales::cut_short_scale())(leader$sales)
+            leader_msg <- paste0(latest_year, "년 매출이 가장 큰 곳은 ", leader$source, " (약 ", sales_txt, ") 입니다.")
+         }
+
+         eff_df <- df %>%
+            group_by(.data$source) %>%
+            summarize(
+               it = mean(.data$inventory_turnover, na.rm = TRUE),
+               roa = mean(.data$roa, na.rm = TRUE),
+               .groups = "drop"
+            )
+         eff_msg <- NULL
+         if (nrow(eff_df)) {
+            best_it <- eff_df %>% filter(!is.na(.data$it)) %>% arrange(desc(.data$it)) %>% slice_head(n = 1)
+            best_roa <- eff_df %>% filter(!is.na(.data$roa)) %>% arrange(desc(.data$roa)) %>% slice_head(n = 1)
+            parts <- c()
+            if (nrow(best_it)) parts <- c(parts, paste0("재고회전율이 가장 빠른 곳: ", best_it$source, " (", round(best_it$it, 2), "배)"))
+            if (nrow(best_roa)) parts <- c(parts, paste0("ROA가 높은 곳: ", best_roa$source, " (", scales::percent(best_roa$roa, accuracy = 0.1), ")"))
+            if (length(parts)) eff_msg <- paste(parts, collapse = " / ")
+         }
+
+         me_vs_peers <- NULL
+         others <- df %>% filter(.data$source != focus)
+         me <- df %>% filter(.data$source == focus)
+         if (nrow(others) && nrow(me)) {
+            latest_year_me <- max(me$year, na.rm = TRUE)
+            me_latest <- me %>% filter(.data$year == latest_year_me)
+            others_latest <- others %>% filter(.data$year == latest_year_me)
+            if (nrow(others_latest)) {
+               me_it <- mean(me_latest$inventory_turnover, na.rm = TRUE)
+               peer_it <- mean(others_latest$inventory_turnover, na.rm = TRUE)
+               delta <- me_it - peer_it
+               if (is.finite(delta)) {
+                  dir <- if (delta > 0) "더 빠릅니다" else "더 느립니다"
+                  me_vs_peers <- paste0("우리 재고회전율이 경쟁사 평균보다 ", abs(round(delta, 2)), "배 ", dir, ".")
+               }
+            }
+         }
+
+         tips <- purrr::compact(list(leader_msg, eff_msg, me_vs_peers))
+         if (length(tips) == 0) return(tags$p("데이터를 불러오면 핵심 요약이 표시됩니다."))
+         tags$ul(class = "friendly-list", lapply(tips, tags$li))
+      })
+
+      output$analysis_actions_friendly <- renderUI({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         target <- df %>% filter(.data$source == focus)
+         fin_validate(fin_need(nrow(target) > 0, "비교할 기업을 선택하면 제안이 표시됩니다."))
+         latest_year <- max(target$year, na.rm = TRUE)
+         latest <- target %>% filter(.data$year == latest_year)
+         prev <- target %>% filter(.data$year == max(target$year[target$year < latest_year], na.rm = TRUE))
+         actions <- c()
+         inv_turn <- mean(latest$inventory_turnover, na.rm = TRUE)
+         roa <- mean(latest$roa, na.rm = TRUE)
+         inv_ratio <- if (sum(latest$sales, na.rm = TRUE) != 0) mean(latest$inventory / latest$sales, na.rm = TRUE) else NA_real_
+         sales_yoy <- if (nrow(prev) && sum(prev$sales, na.rm = TRUE) != 0) {
+            (sum(latest$sales, na.rm = TRUE) - sum(prev$sales, na.rm = TRUE)) / sum(prev$sales, na.rm = TRUE)
+         } else NA_real_
+         if (!is.na(inv_turn) && inv_turn < 2) actions <- c(actions, "회전이 느린 재고를 할인/묶음판매로 정리하세요.")
+         if (!is.na(inv_ratio) && inv_ratio > 0.35) actions <- c(actions, "재고가 매출 대비 높아요. 발주 속도와 안전재고를 점검하세요.")
+         if (!is.na(roa) && roa < 0.03) actions <- c(actions, "자산 대비 이익이 낮습니다. 비용 구조나 비효율 지점을 점검하세요.")
+         if (!is.na(sales_yoy) && sales_yoy < -0.05) actions <- c(actions, "매출이 줄고 있어요. 잘 팔리는 품목 위주로 진열/마케팅을 전환하세요.")
+         if (length(actions) == 0) actions <- c("큰 위험 신호는 없습니다. 현재 전략을 유지하되 인기 품목 재고만 주기적으로 확인하세요.")
+         tags$ul(class = "friendly-list", lapply(actions, tags$li))
+      })
+
+      output$analysis_kpi_row <- renderUI({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         fin_validate(fin_need(!is.null(focus), "비교할 소스를 선택하세요."))
+         target <- df %>% filter(.data$source == focus)
+         fin_validate(fin_need(nrow(target) > 0, "선택된 소스 데이터가 없습니다."))
+         latest_year <- max(target$year, na.rm = TRUE)
+         prev_year <- max(target$year[target$year < latest_year], na.rm = TRUE)
+         latest <- target %>% filter(.data$year == latest_year)
+         prev <- target %>% filter(.data$year == prev_year)
+         safe_mean <- function(x) if (length(x) == 0) NA_real_ else mean(x, na.rm = TRUE)
+         sales_latest <- sum(latest$sales, na.rm = TRUE)
+         sales_prev <- if (nrow(prev)) sum(prev$sales, na.rm = TRUE) else NA_real_
+         yoy <- if (!is.na(sales_prev) && sales_prev != 0) (sales_latest - sales_prev) / sales_prev else NA_real_
+         inv_turn <- safe_mean(latest$inventory_turnover)
+         roa <- safe_mean(latest$roa)
+         inv_ratio <- if (sales_latest != 0) safe_mean(latest$inventory / latest$sales) else NA_real_
+         fmt <- scales::label_comma()
+         mk_box <- function(title, value, subtitle = "", color = "blue", formatter = fmt, unit = NULL) {
+            value_txt <- if (is.na(value)) "-" else formatter(value)
+            sub_txt <- paste0(subtitle, if (!is.null(unit)) paste0(" (", unit, ")") else "")
+            valueBox(value = value_txt, subtitle = sub_txt, color = color)
+         }
+         fluidRow(
+            mk_box(paste0(focus, " 매출(", latest_year, ")"), sales_latest / 1e8,
+                   subtitle = if (is.na(yoy)) "전년 대비 -" else paste0("전년 대비 ", scales::percent(yoy, accuracy = 0.1)),
+                   unit = "억 원", formatter = function(x) scales::comma(x, accuracy = 0.1)),
+            mk_box("재고회전율", inv_turn, subtitle = "높을수록 효율", color = "green",
+                   formatter = function(x) if (is.na(x)) "-" else round(x, 2),
+                   unit = "회전(배)"),
+            mk_box("ROA", roa, subtitle = if (is.na(roa)) "" else scales::percent(roa, accuracy = 0.1),
+                   color = "yellow", formatter = function(x) if (is.na(x)) "-" else scales::percent(x, accuracy = 0.1),
+                   unit = "수익성(%)"),
+            mk_box("재고비율(재고/매출)", inv_ratio, subtitle = "낮을수록 건전", color = "red",
+                   formatter = function(x) if (is.na(x)) "-" else scales::percent(x, accuracy = 0.1),
+                   unit = "비율(%)")
+         )
+      })
+
+      output$analysis_plot_1 <- renderPlotly({
+         df <- analysis_df() %>%
+            mutate(sales_clean = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales, NA_real_))
+         plot_ly(
+            df,
+            x = ~year, y = ~sales_clean / 1e8, color = ~source,
+            type = "scatter", mode = "lines+markers",
+            connectgaps = TRUE,
+            hovertemplate = paste(
+               "연도: %{x}<br>",
+               "매출: %{y:.1f} 억 원<br>",
+               "소스: %{color}<extra></extra>"
+            )
+         ) %>%
+            layout(
+               yaxis = list(title = "매출액 (억 원)", tickformat = ",.0f"),
+               xaxis = list(title = "연도")
+            )
+      })
+
+      output$analysis_plot_2 <- renderPlotly({
+         df <- analysis_df() %>%
+            group_by(.data$source) %>%
+            summarize(
+               inventory_turnover = mean(.data$inventory_turnover, na.rm = TRUE),
+               roa = mean(.data$roa, na.rm = TRUE),
+               .groups = "drop"
+            )
+         fin_validate(fin_need(nrow(df) > 0, "지표를 계산할 수 없습니다."))
+         p_turn <- plot_ly(
+            df,
+            x = ~source, y = ~inventory_turnover,
+            type = "bar", name = "재고회전율(배)",
+            hovertemplate = "소스: %{x}<br>회전율: %{y:.2f} 배<extra></extra>"
+         ) %>%
+            layout(yaxis = list(title = "재고회전율(배)"), xaxis = list(title = ""))
+         p_roa <- plot_ly(
+            df,
+            x = ~source, y = ~roa * 100,
+            type = "bar", name = "ROA(%)",
+            hovertemplate = "소스: %{x}<br>ROA: %{y:.2f}%<extra></extra>"
+         ) %>%
+            layout(yaxis = list(title = "ROA(%)"), xaxis = list(title = ""))
+         subplot(p_turn, p_roa, nrows = 1, shareX = TRUE, titleX = FALSE, margin = 0.05) %>%
+            layout(showlegend = FALSE)
+      })
+
+      output$analysis_plot_3 <- renderPlotly({
+         df <- analysis_df() %>%
+            mutate(
+               profit_margin = if_else(.data$sales != 0, .data$net_income / .data$sales, NA_real_),
+               inventory_ratio = if_else(.data$sales != 0, .data$inventory / .data$sales, NA_real_)
+            )
+         fin_validate(fin_need(sum(!is.na(df$inventory_ratio) & !is.na(df$profit_margin)) > 0, "비교 지표가 부족합니다. 업로드/선택 데이터를 확인하세요."))
+         x_limit <- if (all(is.na(df$inventory_ratio))) 1 else max(df$inventory_ratio, na.rm = TRUE)
+         plot_ly(df, x = ~inventory_ratio, y = ~profit_margin, color = ~source, type = "scatter", mode = "markers",
+                 text = ~paste0(source, " / ", year),
+                 hovertemplate = paste(
+                    "소스: %{color}<br>",
+                    "연도: %{text}<br>",
+                    "재고비율: %{x:.2%}<br>",
+                    "이익률: %{y:.2%}<extra></extra>"
+                 )) %>%
+            layout(
+               xaxis = list(title = "재고 비율(%)", tickformat = ".0%"),
+               yaxis = list(title = "이익률(%)", tickformat = ".0%"),
+               shapes = list(list(type = "line", x0 = 0, x1 = x_limit,
+                                  y0 = 0, y1 = 0, xref = "x", yref = "y",
+                                  line = list(color = "gray", dash = "dot")))
+            )
+      })
+
+      output$analysis_desc_1 <- renderText({
+         df <- analysis_df()
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         by_source <- latest %>%
+            group_by(.data$source) %>%
+            summarize(sales = sum(.data$sales, na.rm = TRUE), .groups = "drop") %>%
+            arrange(desc(.data$sales))
+         fin_validate(fin_need(nrow(by_source) > 0, "매출 비교를 위한 데이터가 없습니다."))
+         leader <- by_source %>% slice_head(n = 1)
+         sales_txt <- scales::label_number(scale_cut = scales::cut_short_scale())(leader$sales)
+         paste0(latest_year, "년 매출 규모는 ", leader$source, "이(가) 약 ", sales_txt, "로 가장 큽니다.")
+      })
+
+      output$analysis_desc_2 <- renderText({
+         df <- analysis_df() %>%
+            group_by(.data$source) %>%
+            summarize(
+               it = mean(.data$inventory_turnover, na.rm = TRUE),
+               roa = mean(.data$roa, na.rm = TRUE),
+               .groups = "drop"
+            )
+         best_it <- df %>% filter(!is.na(.data$it)) %>% arrange(desc(.data$it)) %>% slice_head(n = 1)
+         best_roa <- df %>% filter(!is.na(.data$roa)) %>% arrange(desc(.data$roa)) %>% slice_head(n = 1)
+         parts <- c()
+         if (nrow(best_it)) parts <- c(parts, paste0("재고회전율은 ", best_it$source, "가 ", round(best_it$it, 2), "배로 가장 효율적입니다."))
+         if (nrow(best_roa)) parts <- c(parts, paste0("ROA는 ", best_roa$source, "가 ", scales::percent(best_roa$roa, accuracy = 0.1), "로 가장 높습니다."))
+         if (length(parts) == 0) return("효율성 비교를 위한 지표가 부족합니다.")
+         paste(parts, collapse = " ")
+      })
+
+      output$analysis_desc_3 <- renderText({
+         df <- analysis_df() %>%
+            mutate(
+               profit_margin = if_else(.data$sales != 0, .data$net_income / .data$sales, NA_real_),
+               inventory_ratio = if_else(.data$sales != 0, .data$inventory / .data$sales, NA_real_)
+            ) %>%
+            group_by(.data$source) %>%
+            summarize(
+               margin = mean(.data$profit_margin, na.rm = TRUE),
+               inv_ratio = mean(.data$inventory_ratio, na.rm = TRUE),
+               .groups = "drop"
+            )
+         leader <- df %>% filter(!is.na(.data$margin)) %>% arrange(desc(.data$margin)) %>% slice_head(n = 1)
+         heavy_inv <- df %>% filter(!is.na(.data$inv_ratio)) %>% arrange(desc(.data$inv_ratio)) %>% slice_head(n = 1)
+         msg <- character()
+         if (nrow(leader)) msg <- c(msg, paste0("이익률은 ", leader$source, "가 상대적으로 우수합니다."))
+         if (nrow(heavy_inv)) msg <- c(msg, paste0("재고 비중은 ", heavy_inv$source, "가 높아 관리가 필요합니다."))
+         if (length(msg) == 0) return("이익률/재고 구조를 비교할 데이터가 부족합니다.")
+         paste(msg, collapse = " ")
+      })
+
+      output$analysis_alerts <- renderUI({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         fin_validate(fin_need(!is.null(focus), "소스를 선택하세요."))
+         target <- df %>% filter(.data$source == focus)
+         fin_validate(fin_need(nrow(target) > 0, "소스 데이터가 없습니다."))
+         latest_year <- max(target$year, na.rm = TRUE)
+         latest <- target %>% filter(.data$year == latest_year)
+         prev <- target %>% filter(.data$year == max(target$year[target$year < latest_year], na.rm = TRUE))
+         alerts <- c()
+         inv_turn <- mean(latest$inventory_turnover, na.rm = TRUE)
+         roa <- mean(latest$roa, na.rm = TRUE)
+         inv_ratio <- if (sum(latest$sales, na.rm = TRUE) != 0) mean(latest$inventory / latest$sales, na.rm = TRUE) else NA_real_
+         sales_yoy <- if (nrow(prev) && sum(prev$sales, na.rm = TRUE) != 0) {
+            (sum(latest$sales, na.rm = TRUE) - sum(prev$sales, na.rm = TRUE)) / sum(prev$sales, na.rm = TRUE)
+         } else NA_real_
+         if (!is.na(inv_turn) && inv_turn < 2) alerts <- c(alerts, "재고회전율이 낮아 재고 과잉 위험이 있습니다.")
+         if (!is.na(roa) && roa < 0.03) alerts <- c(alerts, "ROA가 낮아 자산 활용 효율이 떨어집니다.")
+         if (!is.na(inv_ratio) && inv_ratio > 0.35) alerts <- c(alerts, "재고비율이 높습니다. 재고 축소를 검토하세요.")
+         if (!is.na(sales_yoy) && sales_yoy < -0.05) alerts <- c(alerts, "매출이 전년 대비 감소 중입니다.")
+         if (length(alerts) == 0) return(HTML("<p><strong>위험 신호 없음.</strong></p>"))
+         HTML(paste0("<p><strong>위험 신호:</strong></p><ul>", paste(sprintf("<li>%s</li>", alerts), collapse = ""), "</ul>"))
+      })
+
+      output$analysis_delta_note <- renderText({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         others <- df %>% filter(.data$source != focus)
+         me <- df %>% filter(.data$source == focus)
+         if (nrow(others) == 0 || nrow(me) == 0) return("비교 대상이 없습니다.")
+         latest_year <- max(me$year, na.rm = TRUE)
+         me_latest <- me %>% filter(.data$year == latest_year)
+         others_latest <- others %>% filter(.data$year == latest_year)
+         if (nrow(others_latest) == 0) return("동일 연도 비교 대상 없음.")
+         me_it <- mean(me_latest$inventory_turnover, na.rm = TRUE)
+         peer_it <- mean(others_latest$inventory_turnover, na.rm = TRUE)
+         delta <- me_it - peer_it
+         if (is.na(delta)) return("재고회전율 비교를 위한 데이터가 부족합니다.")
+         dir <- if (delta > 0) "높습니다" else "낮습니다"
+         paste0("재고회전율이 경쟁사 평균보다 ", abs(round(delta, 2)), "배 ", dir, ".")
+      })
+
+      output$analysis_insight_main <- renderValueBox({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         fin_validate(fin_need(!is.null(focus), "소스를 선택하세요."))
+         latest_year <- max(df$year, na.rm = TRUE)
+         me <- df %>% filter(.data$source == focus, .data$year == latest_year)
+         sales <- sum(me$sales, na.rm = TRUE) / 1e8
+         valueBox(
+            value = paste0(round(sales, 1), " 억"),
+            subtitle = paste0(latest_year, "년 ", focus, " 매출 (억 원)"),
+            color = "blue",
+            icon = NULL
+         )
+      })
+
+      output$analysis_warning <- renderValueBox({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         fin_validate(fin_need(!is.null(focus), "소스를 선택하세요."))
+         latest_year <- max(df$year, na.rm = TRUE)
+         me <- df %>% filter(.data$source == focus, .data$year == latest_year)
+         inv_turn <- mean(me$inventory_turnover, na.rm = TRUE)
+         roa <- mean(me$roa, na.rm = TRUE)
+         warn <- if (!is.na(inv_turn) && inv_turn < 2) "재고 회전 느림" else if (!is.na(roa) && roa < 0.03) "ROA 낮음" else "특별 위험 없음"
+         valueBox(
+            value = warn,
+            subtitle = "주의 신호",
+            color = if (warn == "특별 위험 없음") "green" else "yellow",
+            icon = NULL
+         )
+      })
+
+      output$analysis_action <- renderValueBox({
+         df <- analysis_df()
+         focus <- analysis_focus_source()
+         fin_validate(fin_need(!is.null(focus), "소스를 선택하세요."))
+         latest_year <- max(df$year, na.rm = TRUE)
+         me <- df %>% filter(.data$source == focus, .data$year == latest_year)
+         inv_turn <- mean(me$inventory_turnover, na.rm = TRUE)
+         action <- if (!is.na(inv_turn) && inv_turn < 2) {
+            "재고 축소/셀다운"
+         } else {
+            "성장 채널 투자"
+         }
+         valueBox(
+            value = action,
+            subtitle = "추천 행동",
+            color = "purple",
+            icon = NULL
+         )
+      })
+
+      output$pred_ts_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         df_all <- fin_combined_df()
+         fin_validate(fin_need(nrow(df_all) > 0, "데이터를 불러오세요"))
+         horizon <- if (!is.null(input$fin_forecast_y)) as.integer(input$fin_forecast_y) else res$horizon
+         if (is.na(horizon) || horizon < 1) horizon <- res$horizon
+         sources <- unique(df_all$source)
+         actual_all <- df_all %>%
+            mutate(
+               sales_krw = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales / 1e8, NA_real_)
+            ) %>%
+            arrange(.data$year)
+         forecasts <- list()
+         for (s in sources) {
+            df_src <- df_all %>%
+               filter(.data$source == s) %>%
+               mutate(sales = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales, NA_real_)) %>%
+               filter(!is.na(.data$sales))
+            if (nrow(df_src) < 3) next
+            fc_try <- try(fin_safe_prophet(df_src, horizon, source_name = s), silent = TRUE)
+            if (inherits(fc_try, "try-error") || is.null(fc_try$forecast)) next
+            forecasts[[s]] <- fc_try$forecast %>% mutate(source = s, yhat = yhat / 1e8, yhat_lower = yhat_lower / 1e8, yhat_upper = yhat_upper / 1e8)
+         }
+         p <- plot_ly()
+         for (s in sources) {
+            act_src <- actual_all %>% filter(.data$source == s)
+            if (nrow(act_src) == 0) next
+            p <- add_trace(
+               p, data = act_src, x = ~year, y = ~sales_krw, type = "scatter", mode = "lines+markers",
+               name = paste0(s, " 실제"),
+               connectgaps = TRUE,
+               hovertemplate = "연도: %{x}<br>실제: %{y:.1f} 억 원<extra></extra>"
+            )
+         }
+         for (s in names(forecasts)) {
+            fc_src <- forecasts[[s]]
+            p <- add_trace(
+               p, data = fc_src, x = ~year, y = ~yhat, type = "scatter", mode = "lines+markers",
+               name = paste0(s, " 예측"),
+               hovertemplate = "연도: %{x}<br>예측: %{y:.1f} 억 원<extra></extra>"
+            )
+            p <- add_ribbons(
+               p, data = fc_src, x = ~year, ymin = ~yhat_lower, ymax = ~yhat_upper,
+               name = paste0(s, " 예측 구간"),
+               fillcolor = "rgba(68, 114, 196, 0.2)", line = list(color = "transparent"),
+               hovertemplate = "연도: %{x}<br>하한: %{ymin:.1f} 억 원<br>상한: %{ymax:.1f} 억 원<extra></extra>"
+            )
+            # 연결선: 마지막 실제 값과 첫 예측 값을 이어 시각적으로 끊김을 없앰
+            act_src <- actual_all %>% filter(.data$source == s, is.finite(.data$sales_krw), .data$sales_krw > 0)
+            if (nrow(act_src) && nrow(fc_src)) {
+               last_act <- act_src %>% slice_tail(n = 1)
+               first_fc <- fc_src %>% slice_head(n = 1)
+               p <- add_segments(
+                  p,
+                  x = last_act$year, xend = first_fc$year,
+                  y = last_act$sales_krw, yend = first_fc$yhat,
+                  line = list(color = "rgba(0,0,0,0.3)", dash = "dot"),
+                  hoverinfo = "skip",
+                  showlegend = FALSE
+               )
+            }
+         }
+         p %>%
+            layout(
+               yaxis = list(title = "매출액 (억 원)", tickformat = ",.0f"),
+               xaxis = list(title = "연도")
+            )
+      })
+
+      output$pred_comp_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         fc_full <- res$full
+         fin_validate(fin_need(nrow(fc_full) > 0, "예측 결과가 없습니다."))
+         plot_ly(
+            fc_full, x = ~year, y = ~trend / 1e8, type = "scatter", mode = "lines",
+            name = "추세", hovertemplate = "연도: %{x}<br>추세: %{y:.1f} 억 원<extra></extra>"
+         ) %>%
+            add_trace(
+               y = ~(yhat / 1e8), name = "예측값",
+               mode = "lines", line = list(dash = "dot", color = "#1f78b4"),
+               hovertemplate = "연도: %{x}<br>예측값: %{y:.1f} 억 원<extra></extra>"
+            ) %>%
+            layout(
+               xaxis = list(title = "연도"),
+               yaxis = list(title = "추세 / 예측 (억 원)")
+            )
+      })
+
+      output$pred_comp_note <- renderText({
+         src <- pred_focus_source()
+         paste0("트렌드/컴포넌트는 '", src, "' 예측 기준입니다. (My Company 데이터가 있으면 우선 사용)")
+      })
+
+      output$pred_fc_error_plot <- renderPlotly({
+         res <- fin_forecast_result()
+         fitted <- res$fitted
+         fin_validate(fin_need(nrow(fitted) > 0, "잔차를 계산할 데이터가 부족합니다. 예측을 다시 실행하세요."))
+         x_min <- min(fitted$year, na.rm = TRUE)
+         x_max <- max(fitted$year, na.rm = TRUE)
+         abs_max <- max(abs(fitted$resid), na.rm = TRUE)
+         if (is.na(abs_max) || abs_max == 0) abs_max <- 1
+         if (abs_max >= 1e9) {
+            divisor <- 1e8; unit_label <- "억 원"; fmt_hover <- ":,.1f"
+         } else if (abs_max >= 1e7) {
+            divisor <- 1e6; unit_label <- "백만 원"; fmt_hover <- ":,.1f"
+         } else if (abs_max >= 1e5) {
+            divisor <- 1e4; unit_label <- "만 원"; fmt_hover <- ":,.0f"
+         } else {
+            divisor <- 1; unit_label <- "원"; fmt_hover <- ":,.0f"
+         }
+         plot_ly(
+            fitted,
+            x = ~year, y = ~resid / divisor,
+            type = "bar", name = "잔차(실제-예측)",
+            hovertemplate = paste0("연도: %{x}<br>잔차: %{y", fmt_hover, "} ", unit_label, "<extra></extra>")
+         ) %>%
+            layout(
+               xaxis = list(title = "연도"),
+               yaxis = list(
+                  title = paste0("잔차 (", unit_label, ")"),
+                  tickformat = if (unit_label == "원") ",.0f" else ",.1f"
+               ),
+               shapes = list(list(type = "line", x0 = x_min, x1 = x_max, y0 = 0, y1 = 0, xref = "x", yref = "y",
+                                  line = list(color = "gray", dash = "dot")))
+            )
+      })
+
+      output$pred_resid_note <- renderText({
+         src <- pred_focus_source()
+         paste0("잔차/불확실성 역시 '", src, "' 예측을 기반으로 합니다. 다른 소스 잔차는 별도 계산되지 않습니다.")
+      })
+
+      output$pred_quality <- renderUI({
+         res <- fin_forecast_result()
+         hist_years <- range(res$history$year, na.rm = TRUE)
+         msgs <- c()
+         if (length(res$history$year) < 3) msgs <- c(msgs, "학습 연도 3개 미만: 예측 불확실성이 큼")
+         if (any(!is.finite(res$history$sales))) msgs <- c(msgs, "학습 데이터에 결측/비정상 값 포함")
+         core <- paste0("학습 구간: ", hist_years[1], " ~ ", hist_years[2], ", 예측: ", res$horizon, "년")
+         if (length(msgs) == 0) return(HTML(paste0("<p><strong>예측 데이터:</strong> ", core, "</p>")))
+         HTML(paste0("<p><strong>예측 데이터 경고:</strong> ", core, "</p><ul>", paste(sprintf("<li>%s</li>", msgs), collapse = ""), "</ul>"))
+      })
+
+      output$pred_top3 <- renderUI({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         fin_validate(fin_need(nrow(fc) > 0, "예측이 준비되면 요약을 보여드릴게요."))
+         latest <- fc %>% slice_tail(n = 1)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         change <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (latest$yhat - hist_last$sales) / hist_last$sales
+         } else NA_real_
+         change_txt <- if (is.na(change)) "직전 연도 비교 불가" else paste0("직전 대비 ", scales::percent(change, accuracy = 0.1))
+         main_msg <- paste0(latest$year, "년 예상 매출: 약 ",
+                            scales::label_number(scale_cut = scales::cut_short_scale())(latest$yhat),
+                            " (", change_txt, ")")
+
+         direction <- if (nrow(fc) >= 2) {
+            diff <- fc$yhat[nrow(fc)] - fc$yhat[1]
+            if (is.na(diff) || abs(diff) < 1e-8) "보합세" else if (diff > 0) "증가세" else "감소세"
+         } else {
+            "보합세"
+         }
+         direction_msg <- paste0("전체 추세는 ", direction, "입니다.")
+
+         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         band_msg <- if (!is.na(band_ratio)) {
+            if (band_ratio > 0.4) {
+               paste0("예측 폭이 넓어요(폭 약 ", scales::percent(band_ratio, accuracy = 1), "). 보수적 발주를 추천.")
+            } else {
+               paste0("예측 폭이 보통입니다(폭 약 ", scales::percent(band_ratio, accuracy = 1), ").")
+            }
+         } else NULL
+
+         yr_range <- range(res$history$year, na.rm = TRUE)
+         learn_msg <- if (all(is.finite(yr_range))) paste0("학습 기간: ", yr_range[1], "년 ~ ", yr_range[2], "년, 예측 ", res$horizon, "년") else NULL
+
+         tips <- purrr::compact(list(main_msg, direction_msg, band_msg, learn_msg))
+         if (length(tips) == 0) return(tags$p("예측이 준비되면 핵심 요약이 나타납니다."))
+         tags$ul(class = "friendly-list", lapply(tips[seq_len(min(3, length(tips)))], tags$li))
+      })
+
+      output$pred_action_simple <- renderUI({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         fin_validate(fin_need(nrow(fc) > 0, "예측을 실행하면 추천 행동이 표시됩니다."))
+         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (fc$yhat[1] - hist_last$sales) / hist_last$sales
+         } else NA_real_
+         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         headline <- if (!is.na(growth) && growth < -0.05) {
+            "매출이 줄 가능성이 있어요."
+         } else if (!is.na(growth) && growth > 0.1) {
+            "매출이 늘 가능성이 커요."
+         } else {
+            "큰 변동은 없을 것으로 보입니다."
+         }
+         steps <- c()
+         if (!is.na(growth) && growth < -0.05) {
+            steps <- c(steps, "발주량과 고정비를 한시적으로 낮추고, 판매 촉진/온라인 채널을 활용하세요.")
+         } else if (!is.na(growth) && growth > 0.1) {
+            steps <- c(steps, "핵심 상품을 선발주하고 리드타임을 체크하세요.")
+         } else {
+            steps <- c(steps, "안전재고를 점검하며 주력 품목 위주로 발주하세요.")
+         }
+         if (!is.na(band_ratio) && band_ratio > 0.4) {
+            steps <- c(steps, "예측 폭이 넓어 변동성이 큽니다. 소량·자주 발주나 주간 모니터링을 권장합니다.")
+         }
+         tags$div(
+            tags$p(tags$strong(headline)),
+            tags$ul(class = "friendly-list", lapply(steps, tags$li))
+         )
+      })
+
+      output$pred_insight_main <- renderValueBox({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
+         latest <- fc %>% slice_tail(n = 1)
+         valueBox(
+            value = paste0(round(latest$yhat / 1e8, 1), " 억"),
+            subtitle = paste0(latest$year, "년 예상 매출"),
+            color = "blue",
+            icon = NULL
+         )
+      })
+
+      output$pred_warning <- renderValueBox({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (fc$yhat[1] - hist_last$sales) / hist_last$sales
+         } else NA_real_
+         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         warn <- if (!is.na(growth) && growth < -0.05) {
+            "매출 감소 우려"
+         } else if (!is.na(band_ratio) && band_ratio > 0.4) {
+            "예측 폭 넓음"
+         } else {
+            "안심 수준"
+         }
+         valueBox(
+            value = warn,
+            subtitle = "예측 신호",
+            color = if (warn == "안심 수준") "green" else "yellow",
+            icon = NULL
+         )
+      })
+
+      output$pred_action_box <- renderValueBox({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (fc$yhat[1] - hist_last$sales) / hist_last$sales
+         } else NA_real_
+         action <- if (!is.na(growth) && growth < -0.05) {
+            "재고·비용 축소"
+         } else if (!is.na(growth) && growth > 0.1) {
+            "재고 선제 확보"
+         } else {
+            "보합: 재고 점검"
+         }
+         valueBox(
+            value = action,
+            subtitle = "추천 행동",
+            color = "purple",
+            icon = NULL
+         )
+      })
+
+      output$pred_accuracy <- renderTable({
+         res <- fin_forecast_result()
+         fitted <- res$fitted
+         fin_validate(fin_need(nrow(fitted) > 0, "정확도 계산을 위한 학습 데이터가 부족합니다."))
+         mae <- mean(abs(fitted$resid), na.rm = TRUE)
+         mape <- mean(abs(fitted$resid / fitted$actual), na.rm = TRUE)
+         last_resid <- fitted %>% arrange(desc(.data$year)) %>% slice_head(n = 1) %>% pull(.data$resid)
+         tibble(
+            Metric = c("MAE", "MAPE", "최근 연도 잔차"),
+            Value = c(mae / 1e8, mape, last_resid / 1e8)
+         ) %>%
+            mutate(Value = dplyr::case_when(
+               Metric == "MAPE" ~ scales::percent(as.numeric(Value), accuracy = 0.1),
+               TRUE ~ paste0(scales::comma(as.numeric(Value), accuracy = 0.1), " 억 원")
+            ))
+      })
+
+      output$pred_summary <- renderText({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
+         latest <- fc %>% slice_tail(n = 1)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         change <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (latest$yhat - hist_last$sales) / hist_last$sales
+         } else {
+            NA_real_
+         }
+         change_txt <- if (is.na(change)) "변화율 계산 불가" else scales::percent(change, accuracy = 0.1)
+         paste0(res$source, "의 ", latest$year, "년 예상 매출은 ",
+                scales::label_number(scale_cut = scales::cut_short_scale())(latest$yhat),
+                " (직전 연도 대비 ", change_txt, ") 수준입니다.")
+      })
+
+      output$pred_detail_1 <- renderText({
+         res <- fin_forecast_result()
+         yr_range <- range(res$history$year, na.rm = TRUE)
+         fin_validate(fin_need(all(is.finite(yr_range)), "학습 데이터가 부족합니다."))
+         paste0("학습 데이터: ", yr_range[1], "년 ~ ", yr_range[2], "년, 예측 기간: ", res$horizon, "년")
+      })
+
+      output$pred_detail_2 <- renderText({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
+         direction <- if (nrow(fc) >= 2) {
+            diff <- fc$yhat[nrow(fc)] - fc$yhat[1]
+            if (is.na(diff) || abs(diff) < 1e-8) "보합세" else if (diff > 0) "증가세" else "감소세"
+         } else {
+            "보합세"
+         }
+         paste0("예측 결과는 ", direction, "로 나타납니다. 예측 구간과 불확실성을 고려해 재고 및 자금 계획을 점검하세요.")
+      })
+
+      output$pred_risk <- renderUI({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (fc$yhat[1] - hist_last$sales) / hist_last$sales
+         } else NA_real_
+         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         msgs <- c()
+         if (!is.na(growth) && growth < -0.05) msgs <- c(msgs, "단기 매출 감소 위험이 있습니다.")
+         if (!is.na(band_ratio) && band_ratio > 0.4) msgs <- c(msgs, "예측 구간이 넓어 불확실성이 높습니다.")
+         if (length(msgs) == 0) return(HTML("<p><strong>리스크:</strong> 중대한 위험 신호 없음.</p>"))
+         HTML(paste0("<p><strong>리스크:</strong></p><ul>", paste(sprintf("<li>%s</li>", msgs), collapse = ""), "</ul>"))
+      })
+
+      output$pred_action <- renderUI({
+         res <- fin_forecast_result()
+         fc <- res$forecast %>% arrange(.data$year)
+         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
+            (fc$yhat[1] - hist_last$sales) / hist_last$sales
+         } else NA_real_
+         if (!is.na(growth) && growth < -0.05) {
+            return(HTML("<p><strong>액션:</strong> 비용/재고 축소, 프로모션·채널 전환으로 단기 수요를 방어하세요.</p>"))
+         }
+         if (!is.na(growth) && growth > 0.1) {
+            return(HTML("<p><strong>액션:</strong> 매출 증가 예상. 리드타임 고려해 핵심 상품 재고를 선제 확보하세요.</p>"))
+         }
+         HTML("<p><strong>액션:</strong> 보합세 예상. 안전재고를 재점검하고 변동성이 큰 품목을 모니터링하세요.</p>")
+      })
+>>>>>>> main
 
   output$fin_quad_plot <- renderPlotly({
     df <- fin_combined_df()
