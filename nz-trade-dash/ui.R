@@ -428,6 +428,45 @@ body <- dashboardBody(
       .viz-text-lg { font-size: 16px; line-height: 1.5; }
       .viz-kpi-sub { font-size: 12px; font-weight: 400; }
     ")),
+    tags$style(HTML("
+      .friendly-intro {
+        background: #f7f9fc;
+        border: 1px solid #e0e6f0;
+        border-radius: 10px;
+        padding: 12px 16px;
+        margin-bottom: 14px;
+        color: #0f294d;
+        font-size: 15px;
+      }
+      .friendly-intro .pill-chip {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 12px;
+        background: #eef4ff;
+        color: #0f294d;
+        font-weight: 700;
+        margin-right: 6px;
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+      .friendly-list {
+        padding-left: 18px;
+        font-size: 15px;
+        margin-bottom: 0;
+      }
+      .friendly-list li { margin-bottom: 6px; }
+      .impact-box .small-box {
+        min-height: 120px;
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+      }
+      .impact-box .small-box h3 { font-size: 30px; }
+      .impact-box .small-box p  { font-size: 15px; }
+      .assist-text {
+        font-size: 14px;
+        color: #3c4a64;
+      }
+    ")),
 
 	    ## modify the dashboard's skin color (palette 1)
 	    tags$style(HTML("
@@ -584,25 +623,54 @@ body <- dashboardBody(
 
     tabItem(
       tabName = "analysis_graph",
-      h3("경쟁사/비교 기업 분석"),
+      h3("내 매장 vs 비슷한 업체 한눈 비교"),
+      div(
+        class = "friendly-intro",
+        tags$p("기본 데모 데이터를 불러와 바로 비교해 드려요. 내 가게 데이터·상장사 검색/업로드를 하면 즉시 갱신됩니다."),
+        tags$div(
+          tags$span(class = "pill-chip", "1단계: 기본값으로 흐름 파악"),
+          tags$span(class = "pill-chip", "2단계: 우리 매장·비교 기업 선택"),
+          tags$span(class = "pill-chip", "3단계: 추천 행동 확인")
+        )
+      ),
       fluidRow(
+        class = "impact-box",
         valueBoxOutput("analysis_insight_main", width = 4),
         valueBoxOutput("analysis_warning", width = 4),
         valueBoxOutput("analysis_action", width = 4)
       ),
       fluidRow(
         box(
-          title = "데이터 상태 & 경보",
+          title = "이번 달 핵심 3줄 요약",
+          width = 8,
+          status = "primary",
+          solidHeader = TRUE,
+          uiOutput("analysis_top3"),
+          div(class = "assist-text", "요약은 최신 연도와 선택된 기업을 기준으로 자동 작성됩니다.")
+        ),
+        box(
+          title = "바로 확인/추천 행동",
+          width = 4,
+          status = "success",
+          solidHeader = TRUE,
+          uiOutput("analysis_actions_friendly"),
+          div(class = "assist-text", "재고회전·ROA·매출 증감에 따라 제안이 달라집니다.")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "데이터 상태/안내",
           width = 4,
           status = "warning",
           solidHeader = TRUE,
           htmlOutput("analysis_quality", class = "viz-text-lg"),
           uiOutput("analysis_alerts", class = "viz-text-lg"),
           tags$hr(),
-          div(class = "viz-text-lg", textOutput("analysis_desc_2"))
+          div(class = "viz-text-lg", textOutput("analysis_desc_2")),
+          div(class = "assist-text", "데모 데이터가 자동 채워져 있습니다. 업로드나 DART 불러오기로 교체 가능.")
         ),
         box(
-          title = "핵심 KPI & 매출 추이",
+          title = "주요 지표/매출 흐름",
           width = 8,
           status = "primary",
           solidHeader = TRUE,
@@ -613,7 +681,7 @@ body <- dashboardBody(
       ),
       fluidRow(
         box(
-          title = "효율/수익성 비교",
+          title = "재고 효율·이익 비교",
           width = 6,
           status = "success",
           solidHeader = TRUE,
@@ -621,7 +689,7 @@ body <- dashboardBody(
           div(class = "viz-text-lg", textOutput("analysis_desc_1"))
         ),
         box(
-          title = "포지션 맵 & 인사이트",
+          title = "재고/이익 위치 한눈에",
           width = 6,
           status = "info",
           solidHeader = TRUE,
@@ -633,37 +701,65 @@ body <- dashboardBody(
 
     tabItem(
       tabName = "prediction_graph",
-      h3("재고/매출 예측 결과 (Prophet)"),
+      h3("재고·매출 예측 (쉽게 보기)"),
+      div(
+        class = "friendly-intro",
+        tags$p("데모 기준 예측을 바로 보여드립니다. 내 데이터 업로드 후 '예측 실행'을 누르면 곧바로 반영돼요."),
+        tags$div(
+          tags$span(class = "pill-chip", "1단계: 기본 예측 확인"),
+          tags$span(class = "pill-chip", "2단계: 내 데이터 업로드/검색"),
+          tags$span(class = "pill-chip", "3단계: 추천 행동 적용")
+        )
+      ),
       fluidRow(
+        class = "impact-box",
         valueBoxOutput("pred_insight_main", width = 4),
         valueBoxOutput("pred_warning", width = 4),
         valueBoxOutput("pred_action_box", width = 4)
       ),
       fluidRow(
         box(
-          title = "예측 시계열",
+          title = "이번 달 알아두면 좋은 점",
+          width = 8,
+          status = "primary",
+          solidHeader = TRUE,
+          uiOutput("pred_top3"),
+          div(class = "assist-text", "예측 추세·불확실성·학습 기간을 한 줄씩 정리했습니다.")
+        ),
+        box(
+          title = "추천 행동/알림",
+          width = 4,
+          status = "success",
+          solidHeader = TRUE,
+          uiOutput("pred_action_simple"),
+          div(class = "assist-text", "아래 품질/정확도 박스에서 데이터 상황을 함께 확인하세요.")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "앞으로 흐름(연도별)",
           width = 8,
           status = "primary",
           solidHeader = TRUE,
           plotlyOutput("pred_ts_plot"),
           div(class = "viz-text-lg", textOutput("pred_summary")),
-          div(class = "viz-text-lg", textOutput("pred_detail_1"))
+          div(class = "viz-text-lg", textOutput("pred_detail_1")),
+          div(class = "assist-text", "예측 구간(리본)을 함께 보며 여유 재고/부족 재고를 가늠하세요.")
         ),
         box(
-          title = "품질/정확도 & 리스크",
+          title = "예측 품질/안내",
           width = 4,
           status = "warning",
           solidHeader = TRUE,
           htmlOutput("pred_quality", class = "viz-text-lg"),
           tableOutput("pred_accuracy"),
           uiOutput("pred_risk", class = "viz-text-lg"),
-          uiOutput("pred_action", class = "viz-text-lg"),
           div(class = "viz-text-lg", textOutput("pred_detail_2"))
         )
       ),
       fluidRow(
         box(
-          title = "트렌드/컴포넌트",
+          title = "추세 분해 보기",
           width = 6,
           status = "info",
           solidHeader = TRUE,
@@ -671,7 +767,7 @@ body <- dashboardBody(
           div(class = "viz-text-lg", textOutput("pred_comp_note"))
         ),
         box(
-          title = "잔차 & 불확실성",
+          title = "예측 오차/폭",
           width = 6,
           status = "success",
           solidHeader = TRUE,
