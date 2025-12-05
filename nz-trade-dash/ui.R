@@ -82,9 +82,10 @@ header <-
 siderbar <-
 	  dashboardSidebar(
 	    width = 200,
-	    sidebarMenu(
-	      id = "sidebar",
-	      style = "position: relative; overflow: visible;",
+    sidebarMenu(
+      id = "sidebar",
+      selected = "prediction_graph",
+      style = "position: relative; overflow: visible;",
 	      # style = "position: relative; overflow: visible; overflow-y:scroll",
 	      # style = 'height: 90vh; overflow-y: auto;',
 	      ## 1st tab show the Main dashboard -----------
@@ -94,17 +95,16 @@ siderbar <-
 	      ),
 
 	      ## Financial benchmarking tab
-	      menuItem("Financial Benchmarking", tabName = "fin_bench", icon = icon("chart-line")),
-	      menuItem("분석 탭", tabName = "analysis_graph", icon = icon("bar-chart")),
-	      menuItem("예측 탭", tabName = "prediction_graph", icon = icon("line-chart")),
-	      ## Teammate add-ons: three extra tabs for the new financial view
-	      menuItem("내 기업 상세 분석(+)", tabName = "fin_detail_graph", icon = icon("circle-info")),
-	      menuItem("예측 분석(+)", tabName = "fin_prediction_graph", icon = icon("chart-area")),
+      menuItem("Financial Benchmarking", tabName = "fin_bench", icon = icon("chart-line")),
+      menuItem("분석 탭", tabName = "analysis_graph", icon = icon("bar-chart")),
+      menuItem("예측 탭", tabName = "prediction_graph", icon = icon("line-chart")),
+      ## Teammate add-on: extra tab for the new financial view
+      menuItem("내 기업 상세 분석(+)", tabName = "fin_detail_graph", icon = icon("circle-info")),
 	      ## Financial benchmarking settings panel (inline, like Market Intelligence)
 	      div(
 	        id = "sidebar_fin_bench",
 	        conditionalPanel(
-	          "input.sidebar === 'fin_bench' || input.sidebar === 'analysis_graph' || input.sidebar === 'prediction_graph' || input.sidebar === 'fin_detail_graph' || input.sidebar === 'fin_prediction_graph'",
+          "input.sidebar === 'fin_bench' || input.sidebar === 'analysis_graph' || input.sidebar === 'prediction_graph' || input.sidebar === 'fin_detail_graph'",
 	          tags$hr(),
 	          h4("설정"),
 	          textInput("fin_corp_query", "상장사 검색", placeholder = "예: 한섬, 020000"),
@@ -648,7 +648,11 @@ body <- dashboardBody(
 
     tabItem(
       tabName = "prediction_graph",
-      h3("재고·매출 예측 (쉽게 보기)"),
+      tags$h3(
+        class = "pred-section-title",
+        style = "font-size: 24px; font-weight: 700; margin-top: 0;",
+        "재고·매출 예측 (쉽게 보기)"
+      ),
       fluidRow(
         class = "impact-box",
         valueBoxOutput("pred_insight_main", width = 4),
@@ -703,6 +707,80 @@ body <- dashboardBody(
           solidHeader = TRUE,
           plotlyOutput("pred_fc_error_plot"),
           div(class = "viz-text-lg", textOutput("pred_resid_note"))
+        )
+      ),
+      tags$hr(),
+      tags$h3(
+        class = "pred-section-title",
+        style = "font-size: 24px; font-weight: 700; margin: 0 0 20px;",
+        "재고·매출 예측 (상세 보기)"
+      ),
+      fluidRow(
+        valueBoxOutput("fin_kpi_sales"),
+        valueBoxOutput("fin_kpi_it"),
+        valueBoxOutput("fin_kpi_roa")
+      ),
+      br(),
+      fluidRow(
+        box(
+          title = "리스크 & 권장 행동",
+          width = 6,
+          status = "warning",
+          solidHeader = TRUE,
+          plotlyOutput("pred_risk_gauge", height = "230px"),
+          div(class = "viz-text-lg", uiOutput("pred_risk")),
+          tags$hr(),
+          plotlyOutput("pred_growth_bar", height = "230px"),
+          div(class = "viz-text-lg", uiOutput("pred_action"))
+        ),
+        box(
+          title = "Trend / 시즌 컴포넌트",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_comp_plot_plus", height = "320px"),
+          div(class = "viz-text-lg", textOutput("pred_summary_plus"))
+        )
+      ),
+      fluidRow(
+        box(
+          title = "예측 품질 상세",
+          width = 6,
+          status = "info",
+          solidHeader = TRUE,
+          plotlyOutput("pred_accuracy_plot", height = "260px"),
+          div(class = "assist-text", "MAE/RMSE/SMAPE로 모델 성능을 다시 점검하세요."),
+          div(class = "viz-text-lg", textOutput("pred_accuracy_note")),
+          div(class = "viz-text-lg", textOutput("pred_detail_1_plus"))
+        ),
+        box(
+          title = "예측 오차 박스플롯",
+          width = 6,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_error_box", height = "320px"),
+          div(class = "viz-text-lg", textOutput("pred_error_box_note"))
+        )
+      ),
+      fluidRow(
+        box(
+          title = "누적 매출 (실제 vs 예측)",
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_cum_plot", height = "300px"),
+          div(class = "viz-text-lg", textOutput("pred_detail_2_plus")),
+          div(class = "assist-text", textOutput("pred_cum_note"))
+        )
+      ),
+      fluidRow(
+        box(
+          title = "예측 오차 분포",
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          plotlyOutput("pred_error_hist", height = "260px"),
+          div(class = "viz-text-lg", textOutput("pred_error_hist_note"))
         )
       )
     ),
@@ -769,80 +847,6 @@ body <- dashboardBody(
           status = "primary",
           solidHeader = TRUE,
           htmlOutput("detail_action")
-        )
-      )
-    ),
-
-    tabItem(
-      tabName = "fin_prediction_graph",
-      h3("예측 분석 (+)"),
-      fluidRow(
-        valueBoxOutput("fin_kpi_sales"),
-        valueBoxOutput("fin_kpi_it"),
-        valueBoxOutput("fin_kpi_roa")
-      ),
-      br(),
-      fluidRow(
-        box(
-          title = "예측 시계열",
-          width = 6,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_ts_plot_plus", height = "320px")
-        ),
-        box(
-          title = "Trend / 시즌 컴포넌트",
-          width = 6,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_comp_plot_plus", height = "320px")
-        )
-      ),
-      fluidRow(
-        box(
-          title = "예측 오차 / 실제 비교",
-          width = 6,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_fc_error_plot_plus", height = "320px")
-        ),
-        box(
-          title = "예측 오차 박스플롯",
-          width = 6,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_error_box", height = "320px")
-        )
-      ),
-      fluidRow(
-        box(
-          title = "누적 매출 (실제 vs 예측)",
-          width = 12,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_cum_plot", height = "300px")
-        )
-      ),
-      fluidRow(
-        box(
-          title = "요약 & 인사이트",
-          width = 12,
-          status = "primary",
-          solidHeader = TRUE,
-          textOutput("pred_summary_plus"),
-          br(),
-          textOutput("pred_detail_1_plus"),
-          br(),
-          textOutput("pred_detail_2_plus")
-        )
-      ),
-      fluidRow(
-        box(
-          title = "예측 오차 분포",
-          width = 12,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_error_hist", height = "260px")
         )
       )
     ),
