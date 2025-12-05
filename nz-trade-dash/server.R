@@ -13175,6 +13175,22 @@ server <-
                margin = list(t = 20)
             )
       })
+      output$pred_error_box_note <- renderText({
+         res <- fin_forecast_result()
+         fitted <- res$fitted
+         fin_validate(fin_need(nrow(fitted) > 0, "잔차를 계산할 데이터가 부족합니다. 예측을 다시 실행하세요."))
+         resid_vals <- fitted$resid
+         valid <- resid_vals[is.finite(resid_vals)]
+         fin_validate(fin_need(length(valid) > 1, "잔차 표본이 부족합니다. 예측을 다시 실행하세요."))
+         med <- stats::median(valid)
+         iqr_val <- stats::IQR(valid)
+         fmt <- scales::label_number(scale_cut = scales::cut_short_scale())
+         paste0(
+            "잔차 중앙값 ", fmt(med),
+            ", 중앙 50% 폭 ", fmt(iqr_val),
+            " 수준입니다. 0 근처면 모델 편향이 적습니다."
+         )
+      })
 
       output$pred_cum_plot <- renderPlotly({
          res <- fin_forecast_result()
@@ -13193,6 +13209,21 @@ server <-
                margin = list(t = 20)
             )
       })
+      output$pred_cum_note <- renderText({
+         res <- fin_forecast_result()
+         hist_df <- res$history %>% arrange(.data$year) %>% mutate(value = cumsum(.data$sales))
+         fc_df <- res$forecast %>% arrange(.data$year) %>% mutate(value = cumsum(.data$yhat))
+         fin_validate(fin_need(nrow(hist_df) > 0, "데이터를 불러오세요"))
+         fin_validate(fin_need(nrow(fc_df) > 0, "예측을 실행하면 누적값을 볼 수 있습니다."))
+         actual_last <- tail(hist_df$value, 1)
+         forecast_last <- tail(fc_df$value, 1)
+         fin_validate(fin_need(all(is.finite(c(actual_last, forecast_last))), "누적 값을 계산할 수 없습니다."))
+         diff <- forecast_last - actual_last
+         fmt <- scales::label_number(scale_cut = scales::cut_short_scale())
+         if (abs(diff) < 1e-6) return("예측 누적 매출이 실제와 거의 동일한 수준입니다.")
+         direction <- if (diff > 0) "높습니다" else "낮습니다"
+         paste0("예측 누적 매출이 실제 대비 ", direction, " (차이 약 ", fmt(abs(diff)), ").")
+      })
 
       output$pred_error_hist <- renderPlotly({
          res <- fin_forecast_result()
@@ -13204,6 +13235,23 @@ server <-
                yaxis = list(title = "빈도"),
                margin = list(t = 20)
             )
+      })
+      output$pred_error_hist_note <- renderText({
+         res <- fin_forecast_result()
+         fitted <- res$fitted
+         fin_validate(fin_need(nrow(fitted) > 0, "잔차를 계산할 데이터가 부족합니다. 예측을 다시 실행하세요."))
+         resid_vals <- fitted$resid
+         valid <- resid_vals[is.finite(resid_vals)]
+         fin_validate(fin_need(length(valid) > 0, "잔차 데이터가 부족합니다. 예측을 다시 실행하세요."))
+         pos_share <- mean(valid > 0)
+         neg_share <- mean(valid < 0)
+         zero_share <- 1 - pos_share - neg_share
+         paste0(
+            "실제보다 높게 추정한 구간 ", scales::percent(pos_share, accuracy = 1),
+            ", 낮게 추정한 구간 ", scales::percent(neg_share, accuracy = 1),
+            if (zero_share > 0.01) paste0(", 거의 일치 ", scales::percent(zero_share, accuracy = 1)) else "",
+            " 수준입니다."
+         )
       })
 
       output$pred_quality <- renderUI({
@@ -13407,35 +13455,143 @@ server <-
       output$pred_detail_2 <- renderText(pred_detail_2_text())
       output$pred_detail_2_plus <- renderText(pred_detail_2_text())
 
-      output$pred_risk <- renderUI({
+      pred_risk_data <- reactive({
          res <- fin_forecast_result()
          fc <- res$forecast %>% arrange(.data$year)
-         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
+         hist_df <- res$history %>% arrange(.data$year)
+         fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
+         fin_validate(fin_need(nrow(hist_df) > 0, "과거 실측 데이터를 불러오세요."))
+         hist_last <- hist_df %>% slice_tail(n = 1)
          growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
             (fc$yhat[1] - hist_last$sales) / hist_last$sales
          } else NA_real_
          band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         list(
+            band_ratio = band_ratio,
+            growth = growth,
+            hist_sales = hist_last$sales,
+            hist_year = hist_last$year,
+            forecast_first = fc$yhat[1],
+            forecast_year = fc$year[1]
+         )
+      })
+
+      output$pred_risk_gauge <- renderPlotly({
+         metrics <- pred_risk_data()
+         fin_validate(fin_need(is.finite(metrics$band_ratio), "예측 폭 정보를 계산할 수 없습니다."))
+         ratio <- max(metrics$band_ratio, 0)
+         range_max <- if (ratio > 1) ratio * 1.1 else 1
+         plot_ly(
+            type = "indicator",
+            mode = "gauge+number",
+            value = ratio,
+            number = list(valueformat = ".0%"),
+            gauge = list(
+               axis = list(range = list(0, range_max), tickformat = ".0%"),
+               steps = list(
+                  list(range = c(0, min(0.2, range_max)), color = "#b7e4c7"),
+                  list(range = c(min(0.2, range_max), min(0.4, range_max)), color = "#f9e79f"),
+                  list(range = c(min(0.4, range_max), range_max), color = "#f5b7b1")
+               ),
+               threshold = list(
+                  line = list(color = "#c0392b", width = 4),
+                  value = min(0.4, range_max)
+               )
+            ),
+            domain = list(x = c(0, 1), y = c(0, 1)),
+            title = list(text = "예측 폭 (리본 대비)")
+         ) %>%
+            layout(margin = list(t = 40, b = 0, l = 0, r = 0))
+      })
+
+      output$pred_growth_bar <- renderPlotly({
+         metrics <- pred_risk_data()
+         fin_validate(fin_need(all(is.finite(c(metrics$hist_sales, metrics$forecast_first))), "성장률 데이터를 계산할 수 없습니다."))
+         df <- tibble(
+            구분 = c(
+               paste0(metrics$hist_year, "년 실제"),
+               paste0(metrics$forecast_year, "년 예측")
+            ),
+            값 = c(metrics$hist_sales, metrics$forecast_first)
+         )
+         plot_ly(
+            df,
+            x = ~구분,
+            y = ~값 / 1e8,
+            type = "bar",
+            text = ~paste0(round(값 / 1e8, 1), " 억"),
+            textposition = "outside",
+            hovertemplate = "%{x}: %{text}<extra></extra>",
+            marker = list(color = c("#2980b9", "#1abc9c"))
+         ) %>%
+            layout(
+               yaxis = list(title = "금액(억 원)"),
+               margin = list(t = 40)
+            )
+      })
+
+      output$pred_risk <- renderUI({
+         metrics <- pred_risk_data()
          msgs <- c()
-         if (!is.na(growth) && growth < -0.05) msgs <- c(msgs, "단기 매출 감소 위험이 있습니다.")
-         if (!is.na(band_ratio) && band_ratio > 0.4) msgs <- c(msgs, "예측 구간이 넓어 불확실성이 높습니다.")
+         if (!is.na(metrics$growth) && metrics$growth < -0.05) msgs <- c(msgs, "단기 매출 감소 위험이 있습니다.")
+         if (!is.na(metrics$band_ratio) && metrics$band_ratio > 0.4) msgs <- c(msgs, "예측 구간이 넓어 불확실성이 높습니다.")
          if (length(msgs) == 0) return(HTML("<p><strong>리스크:</strong> 중대한 위험 신호 없음.</p>"))
          HTML(paste0("<p><strong>리스크:</strong></p><ul>", paste(sprintf("<li>%s</li>", msgs), collapse = ""), "</ul>"))
       })
 
       output$pred_action <- renderUI({
-         res <- fin_forecast_result()
-         fc <- res$forecast %>% arrange(.data$year)
-         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
-         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
-            (fc$yhat[1] - hist_last$sales) / hist_last$sales
-         } else NA_real_
-         if (!is.na(growth) && growth < -0.05) {
+         metrics <- pred_risk_data()
+         if (!is.na(metrics$growth) && metrics$growth < -0.05) {
             return(HTML("<p><strong>액션:</strong> 비용/재고 축소, 프로모션·채널 전환으로 단기 수요를 방어하세요.</p>"))
          }
-         if (!is.na(growth) && growth > 0.1) {
+         if (!is.na(metrics$growth) && metrics$growth > 0.1) {
             return(HTML("<p><strong>액션:</strong> 매출 증가 예상. 리드타임 고려해 핵심 상품 재고를 선제 확보하세요.</p>"))
          }
          HTML("<p><strong>액션:</strong> 보합세 예상. 안전재고를 재점검하고 변동성이 큰 품목을 모니터링하세요.</p>")
+      })
+
+      pred_accuracy_metrics <- reactive({
+         res <- fin_forecast_result()
+         fitted <- res$fitted
+         fin_validate(fin_need(nrow(fitted) > 0, "정확도 계산을 위한 학습 데이터가 부족합니다."))
+         mae <- mean(abs(fitted$resid), na.rm = TRUE)
+         mape <- mean(abs(fitted$resid / fitted$actual), na.rm = TRUE)
+         last_resid <- fitted %>% arrange(desc(.data$year)) %>% slice_head(n = 1) %>% pull(.data$resid)
+         list(mae = mae, mape = mape, last_resid = last_resid)
+      })
+
+      output$pred_accuracy_plot <- renderPlotly({
+         metrics <- pred_accuracy_metrics()
+         accuracy_df <- tibble(
+            metric = c("MAE (억)", "최근 잔차 (억)", "MAPE (%)"),
+            value = c(metrics$mae / 1e8, metrics$last_resid / 1e8, metrics$mape * 100),
+            unit = c("억", "억", "%")
+         )
+         plot_ly(
+            accuracy_df,
+            x = ~metric,
+            y = ~value,
+            type = "bar",
+            text = ~ifelse(unit == "%", paste0(round(value, 1), "%"), paste0(round(value, 1), " 억")),
+            textposition = "auto",
+            hovertemplate = "%{x}: %{text}<extra></extra>",
+            marker = list(color = c("#5dade2", "#48c9b0", "#f7dc6f"))
+         ) %>%
+            layout(
+               yaxis = list(title = "값 (억/%)"),
+               margin = list(t = 40)
+            )
+      })
+
+      output$pred_accuracy_note <- renderText({
+         metrics <- pred_accuracy_metrics()
+         fmt_num <- function(v, unit) {
+            if (unit == "%") paste0(round(v, 1), "%") else paste0(round(v / 1e8, 1), " 억 원")
+         }
+         mae_txt <- fmt_num(metrics$mae, "억")
+         mape_txt <- fmt_num(metrics$mape * 100, "%")
+         resid_txt <- fmt_num(metrics$last_resid, "억")
+         paste0("MAE ", mae_txt, ", 최근 잔차 ", resid_txt, ", MAPE ", mape_txt, " 수준입니다.")
       })
 
       ## 4. Monthly update ------------------------
