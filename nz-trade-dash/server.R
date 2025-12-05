@@ -393,14 +393,8 @@ tmp_un_comtrade_max_year <- year(Sys.time()) - 2 # 2 years of lag
 server <- 
    function(input, output, session) {
       ## Header navigation: icons controlling sidebar tab
-      observeEvent(input$go_dashboard, {
-         updateTabItems(session, "sidebar", "dashboard")
-      })
       observeEvent(input$go_fin, {
          updateTabItems(session, "sidebar", "fin_bench")
-      })
-      observeEvent(input$go_market, {
-         updateTabItems(session, "sidebar", "country_intel")
       })
       ## I. Main dashboard -----------------------------
       i_prog <- 1
