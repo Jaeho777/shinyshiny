@@ -100,6 +100,7 @@ siderbar <-
       menuItem("예측 탭", tabName = "prediction_graph", icon = icon("line-chart")),
       ## Teammate add-on: extra tab for the new financial view
       menuItem("내 기업 상세 분석(+)", tabName = "fin_detail_graph", icon = icon("circle-info")),
+      menuItem("사용 설명", tabName = "usage_guide", icon = icon("info-circle")),
 	      ## Financial benchmarking settings panel (inline, like Market Intelligence)
 	      div(
 	        id = "sidebar_fin_bench",
@@ -793,7 +794,8 @@ body <- dashboardBody(
         valueBoxOutput("fin_kpi_sales"),
         valueBoxOutput("fin_kpi_it"),
         valueBoxOutput("fin_kpi_roa")
-      ),
+    ),
+
       br(),
       fluidRow(
         box(
@@ -1030,6 +1032,65 @@ body <- dashboardBody(
       div(
         id = "monthly_update",
         fluidRow(htmlOutput("MonthlyUpdate"))
+      )
+    )
+    ,
+    tabItem(
+      tabName = "usage_guide",
+      h3("이 대시보드를 활용하는 방법"),
+      fluidRow(
+        box(
+          title = "1단계: 데이터 준비",
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          tags$ul(
+            tags$li("사이드바에서 상장사 검색 또는 `내 가게 파일 업로드`로 데이터를 불러옵니다."),
+            tags$li("필요 시 `DART 불러오기`나 `데모 데이터 로드` 버튼을 눌러 예시 데이터를 확인합니다."),
+            tags$li("예측 실행 전 최소 3개 연도의 매출 데이터가 포함되어 있는지 확인하세요.")
+          )
+        )
+      ),
+      fluidRow(
+        box(
+          title = "2단계: 예측 실행 & 빠른 진단",
+          width = 12,
+          status = "success",
+          solidHeader = TRUE,
+          tags$p("`예측 탭`의 ‘쉽게 보기’ 섹션은 경영진이 빠르게 판단할 수 있도록 요약 인사이트를 제공합니다."),
+          tags$ul(
+            tags$li("인사이트/경고/추천 행동 valueBox를 먼저 확인해 이번 시즌 핵심 메시지를 파악합니다."),
+            tags$li("예측 품질·오차 박스를 통해 데이터 신뢰도를 체크합니다."),
+            tags$li("이 단계에서 1차 발주/프로모션 여부를 결정할 수 있습니다.")
+          )
+        )
+      ),
+      fluidRow(
+        box(
+          title = "3단계: 상세 검증",
+          width = 12,
+          status = "info",
+          solidHeader = TRUE,
+          tags$p("같은 예측 탭의 ‘상세 보기’ 구간 또는 내 기업 상세 분석 탭을 활용해 모델 근거를 검증하세요."),
+          tags$ul(
+            tags$li("예측 밴드·Trend/시즌 플롯으로 패턴과 불확실성을 비교합니다."),
+            tags$li("누적 매출·잔차 박스플롯·오차 분포로 편향 구간을 식별합니다."),
+            tags$li("리스크 게이지와 성장률 막대를 통해 발주/재고 시나리오를 시각적으로 비교합니다.")
+          )
+        )
+      ),
+      fluidRow(
+        box(
+          title = "4단계: 의사결정 & 공유",
+          width = 12,
+          status = "warning",
+          solidHeader = TRUE,
+          tags$ul(
+            tags$li("추천 행동과 액션 플랜을 참고해 발주 계획·프로모션 전략을 문서화합니다."),
+            tags$li("팀원에게 공유할 때는 ‘쉽게 보기 → 상세 보기 → 액션 플랜’ 순으로 설명하면 이해가 빠릅니다."),
+            tags$li("새로운 데이터가 들어오면 1단계부터 반복하여 최신 계획을 유지하세요.")
+          )
+        )
       )
     )
   )
