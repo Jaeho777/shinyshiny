@@ -68,632 +68,407 @@ header <-
       icon = icon("comment")
     ),
     tags$li(class = "dropdown",
-      actionLink("go_dashboard", icon("dashboard"))
-    ),
-    tags$li(class = "dropdown",
       actionLink("go_fin", icon("line-chart"))
-    ),
-    tags$li(class = "dropdown",
-      actionLink("go_market", icon("globe"))
     )
   )
 
 ## 2. siderbar ------------------------------
 siderbar <-
 	  dashboardSidebar(
-	    width = 200,
+	    width = 230,
     sidebarMenu(
       id = "sidebar",
-      selected = "prediction_graph",
+      selected = "tab_data",
       style = "position: relative; overflow: visible;",
-	      # style = "position: relative; overflow: visible; overflow-y:scroll",
-	      # style = 'height: 90vh; overflow-y: auto;',
-	      ## 1st tab show the Main dashboard -----------
-	      menuItem("Main Dashboard",
-	        tabName = "dashboard", icon = icon("dashboard"),
-	        badgeLabel = maxYear_lb, badgeColor = "green"
-	      ),
-
-	      ## Financial benchmarking tab
-      menuItem("Financial Benchmarking", tabName = "fin_bench", icon = icon("chart-line")),
-      menuItem("분석 탭", tabName = "analysis_graph", icon = icon("bar-chart")),
-      menuItem("예측 탭", tabName = "prediction_graph", icon = icon("line-chart")),
-      ## Teammate add-on: extra tab for the new financial view
-      menuItem("내 기업 상세 분석(+)", tabName = "fin_detail_graph", icon = icon("circle-info")),
+      menuItem("데이터 준비", tabName = "tab_data", icon = icon("upload")),
+      menuItem("현황 진단", tabName = "tab_diagnosis", icon = icon("stethoscope")),
+      menuItem("수요 예측", tabName = "tab_prediction", icon = icon("chart-line")),
+      menuItem("발주/액션 플랜", tabName = "tab_action", icon = icon("clipboard-check")),
       menuItem("사용 설명", tabName = "usage_guide", icon = icon("info-circle")),
-	      ## Financial benchmarking settings panel (inline, like Market Intelligence)
-	      div(
-	        id = "sidebar_fin_bench",
-	        conditionalPanel(
-          "input.sidebar === 'fin_bench' || input.sidebar === 'analysis_graph' || input.sidebar === 'prediction_graph' || input.sidebar === 'fin_detail_graph'",
-	          tags$hr(),
-	          h4("설정"),
-	          textInput("fin_corp_query", "상장사 검색", placeholder = "예: 한섬, 020000"),
-	          actionButton("fin_corp_search", "검색"),
-	          selectInput("fin_corp_pick", "상장사 선택", choices = c(), selected = NULL),
-	          actionButton("fin_fetch_dart", "DART 불러오기"),
-	          actionButton("fin_load_demo", "데모 데이터 로드"),
-	          hr(),
-	          fileInput("fin_upload", "내 가게 파일 업로드", accept = c(".xlsx", ".xls", ".csv")),
-	          uiOutput("fin_mapping_ui"),
-	          hr(),
-	          numericInput("fin_forecast_y", "예측 연도 수", value = 3, min = 1, max = 5),
-	          actionButton("fin_do_forecast", "예측 실행", class = "btn-primary")
-	        )
-	      ),
-
-	      useShinyjs(),
-
-	      ## 2nd Second tab shows the country/region level tab --------------
-	      menuItem("Market Intelligence", tabName = "country_intel", icon = icon("globe")),
-	      div(
-	        id = "sidebar_cr",
-	        conditionalPanel(
-	          "input.sidebar === 'country_intel'",
-	          selectizeInput("select_country",
-	            "Select or search for one or multiple markets",
-	            choices = list_country,
-	            selected = NULL, width = "200px",
-	            multiple = T
-	          ), # ,
-	          # actionButton('btn_country','Submit')
-
-	          ## action button to build report
-	          actionButton("btn_build_country_report",
-	            paste0("Build Report"),
-	            icon = icon("wrench")
-	          ),
-
-	          ## reset side bar selectoin
-	          actionButton("btn_reset_cr",
-	            "Reset",
-	            icon = icon("refresh")
-	          )
-	        )
-	      ),
-
-	      ## 3rd tab shows commodity intel ----------
-	      menuItem("Commodity Intelligence",
-	        tabName = "commodity_intel", icon = icon("barcode"), startExpanded = F,
-	        menuSubItem("Exports", tabName = "ci_exports", icon = icon("export", lib = "glyphicon")),
-	        menuSubItem("Imports", tabName = "ci_imports", icon = icon("import", lib = "glyphicon")),
-	        menuSubItem("Intelligence by HS code", tabName = "ci_intel_by_hs", icon = icon("bolt"))
-	      ),
-
-	      ## give sidebar inputs a id so that it can be manipulated by css
-	      div(
-	        id = "sidebar_ci_exports",
-	        conditionalPanel(
-	          "input.sidebar === 'ci_exports'",
-
-	          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
-	          radioButtons("rbtn_prebuilt_diy_ex",
-	            tags$p("Step 1:", tags$br(), "Select commodities:"),
-	            choices = c("Pre-defined", "Self-defined"),
-	            selected = "Pre-defined",
-	            inline = F,
-	            width = "200px"
-	          ),
-
-	          ## conditional on select pre-built ones
-	          conditionalPanel(
-	            "input.rbtn_prebuilt_diy_ex == 'Pre-defined'",
-	            selectizeInput("select_comodity_ex",
-	              tags$p("Step 2:", tags$br(), "Select or search commodities"),
-	              choices = list_snz_commodity_ex,
-	              selected = NULL, width = "200px",
-	              multiple = T
-	            )
-	          ),
-	          ## conditonal on build your own report
-	          conditionalPanel(
-	            "input.rbtn_prebuilt_diy_ex == 'Self-defined'",
-	            fileInput("file_comodity_ex",
-	              tags$p("Step 2:", tags$br(), "Upload self-defined HS codes groupings"),
-	              accept = c(".csv"),
-	              width = "200px",
-	              multiple = F,
-	              buttonLabel = "Upload CSV"
-	            )
-	          ),
-	          ## action button to build report
-	          actionButton("btn_build_commodity_report_ex",
-	            paste0("Build Report"),
-	            icon = icon("wrench")
-	          ),
-
-	          ## reset side bar selectoin
-	          actionButton("btn_reset_ci_ex",
-	            "Reset",
-	            icon = icon("refresh")
-	          )
-	        )
-	      ),
-
-	      ## Show panel only when Commodity intelligence sidebar is selected
-	      div(
-	        id = "sidebar_ci_imports",
-	        conditionalPanel(
-	          "input.sidebar === 'ci_imports'",
-
-	          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
-	          radioButtons("rbtn_prebuilt_diy_im",
-	            tags$p("Step 1:", tags$br(), "Select commodities:"),
-	            choices = c("Pre-defined", "Self-defined"),
-	            selected = "Pre-defined",
-	            inline = F,
-	            width = "200px"
-	          ),
-
-	          ## conditional on select pre-built ones
-	          conditionalPanel(
-	            "input.rbtn_prebuilt_diy_im == 'Pre-defined'",
-	            selectizeInput("select_comodity_im",
-	              tags$p("Step 2:", tags$br(), "Select or search commodities"),
-	              choices = list_snz_commodity_im,
-	              selected = NULL, width = "200px",
-	              multiple = T
-	            )
-	          ),
-	          ## conditonal on build your own report
-	          conditionalPanel(
-	            "input.rbtn_prebuilt_diy_im == 'Self-defined'",
-	            fileInput("file_comodity_im",
-	              tags$p("Step 2:", tags$br(), "Upload self-defined HS codes groupings"),
-	              accept = c(".csv"),
-	              width = "200px",
-	              multiple = F,
-	              buttonLabel = "Upload CSV"
-	            )
-	          ),
-
-	          ## action button to build report
-	          actionButton("btn_build_commodity_report_im",
-	            paste0("Build Report"),
-	            icon = icon("wrench")
-	          ),
-
-	          ## reset side bar selectoin
-	          actionButton("btn_reset_ci_im",
-	            "Reset",
-	            icon = icon("refresh")
-	          )
-	        )
-	      ),
-
-	      ## Show panel only when Commodity intelligence sidebar is selected
-	      div(
-	        id = "sidebar_ci_intel_by_hs",
-	        conditionalPanel(
-	          "input.sidebar === 'ci_intel_by_hs'",
-	          ## radio buttons to ask user to choose prebuilt commodity groups or build their owns
-	          radioButtons("rbtn_intel_by_hs",
-	            tags$p("Intelligence reported on:"),
-	            choices = c("Exports", "Imports"),
-	            selected = "Exports",
-	            inline = F,
-	            width = "200px"
-	          )
-	        )
-	      ),
-
-	      ## 4th tab HS finder -------------------------
-	      # menuItem("HS code finder", tabName = 'hs_finder', icon = icon('search') ),
-
-	      ## 5th tab Data source, definition , i.e., help ---------------
-	      menuItem("FAQs", tabName = "help", icon = icon("question-circle")),
-
-	      ## 6th tab monthly update ----------------------
-	      menuItem("Stats NZ Releases",
-	        tabName = "monthly_update", icon = icon("bell"),
-	        badgeLabel = "new", badgeColor = "green"
-	      )
-	    )
+      hr()
+    )
 	  )
 
 ## 3. body --------------------------------
 body <- dashboardBody(
   ## 3.0. CSS styles in header ----------------------------
   tags$head(
-    # ## JS codes
-    # tags$script(src = "fixedElement.js" ),
-    # tags$style(HTML(".scroller_anchor{height:0px; margin:0; padding:0;};
-    #                  .scroller{background: white;
-    #                   border: 1px solid #CCC;
-    #                   margin:0 0 10px;
-    #                   z-index:100;
-    #                   height:50px;
-    #                   font-size:18px;
-    #                   font-weight:bold;
-    #                   text-align:center;
-    #                  width:500px;}")),
-
-    # tags$script(src = "world.js" ),
     tags$script("document.title = 'New Zealand Trade Intelligence Dashboard'"),
-
-	    ### Styles
-	    tags$style(HTML("
-	      .small-box {
-	        height: 80px;
-	        padding-top: 6px;
-	        padding-bottom: 4px;
-	      }
-	      .small-box h3 {
-	        margin: 0;
-	        line-height: 1.15;
-	      }
-	    ")),
-    tags$style(HTML(".fa { font-size: 35px; }")),
-    tags$style(HTML(".glyphicon { font-size: 33px; }")), ## use glyphicon package
-    tags$style(HTML(".fa-dashboard { font-size: 20px; }")),
-    tags$style(HTML(".fa-globe { font-size: 20px; }")),
-    tags$style(HTML(".fa-barcode { font-size: 20px; }")),
-    tags$style(HTML(".tab-content { padding-left: 20px; padding-right: 30px; }")),
-    tags$style(HTML(".fa-wrench { font-size: 15px; }")),
-    tags$style(HTML(".fa-refresh { font-size: 15px; }")),
-    tags$style(HTML(".fa-search { font-size: 15px; }")),
-    tags$style(HTML(".fa-comment { font-size: 20px; }")),
-    tags$style(HTML(".fa-share-alt { font-size: 20px; }")),
-	    tags$style(HTML(".fa-envelope { font-size: 20px; }")),
-	    tags$style(HTML(".fa-question-circle { font-size: 20px; }")),
-	    tags$style(HTML(".fa-chevron-circle-down { font-size: 15px; }")),
-	    tags$style(HTML(".fa-bell { font-size: 17px; }")),
-	    tags$style(HTML(".fa-check { font-size: 14px; }")),
-	    tags$style(HTML(".fa-times { font-size: 14px; }")),
-	    ## 헤더 제목 왼쪽 정렬
-	    tags$style(HTML("
-	      .main-header .logo {
-	        text-align: left;
-	        padding-left: 15px;
-	      }
-	    ")),
-	    ## 사이드바 메뉴를 조금 더 왼쪽으로
-	    tags$style(HTML("
-	      .main-sidebar .sidebar .sidebar-menu > li > a {
-	        padding-left: 10px;
-	      }
-	    ")),
-	    ## valueBox 텍스트 대비 강화
-	    tags$style(HTML("
-	      /* 기본 valueBox 스타일 */
-	      .small-box h3 { color: #ffffff !important; }
-	      .small-box p  { color: #111111 !important; }
-	      /* Financial KPI 전용: 제목/값 모두 흰색, 제목을 위에 표시 */
-	      .small-box .fin-kpi-title {
-	        display: block;
-	        color: #ffffff !important;
-	        font-size: 12px;
-	        font-weight: 400;
-	        margin-bottom: 1px;
-	      }
-	      .small-box .fin-kpi-value {
-	        display: block;
-	        color: #ffffff !important;
-	        font-size: 26px;
-	        font-weight: 700;
-	        margin-top: 0;
-	      }
-	    ")),
-
-    # tags$style(HTML(".fa-twitter { font-size: 10px; color:red;}")),
-    # tags$style(HTML(".fa-facebook { font-size: 10px; color:red;}")),
-    # tags$style(HTML(".fa-google-plus { font-size: 10px; color:red;}")),
-    # tags$style(HTML(".fa-pinterest-p { font-size: 10px; color:red;}")),
-    # tags$style(HTML(".fa-linkedin { font-size: 10px; color:red;}")),
-    # tags$style(HTML(".fa-tumblr { font-size: 10px; color:red;}")),
-    tags$style(HTML("
-      .viz-text-lg { font-size: 16px; line-height: 1.5; }
-      .viz-kpi-sub { font-size: 12px; font-weight: 400; }
-    ")),
-    tags$style(HTML("
-      .friendly-intro {
-        background: #f7f9fc;
-        border: 1px solid #e0e6f0;
-        border-radius: 10px;
-        padding: 12px 16px;
-        margin-bottom: 14px;
-        color: #0f294d;
-        font-size: 15px;
-      }
-      .friendly-intro .pill-chip {
-        display: inline-block;
-        padding: 6px 10px;
-        border-radius: 12px;
-        background: #eef4ff;
-        color: #0f294d;
-        font-weight: 700;
-        margin-right: 6px;
-        margin-bottom: 6px;
-        font-size: 13px;
-      }
-      .friendly-list {
-        padding-left: 18px;
-        font-size: 15px;
-        margin-bottom: 0;
-      }
-      .friendly-list li { margin-bottom: 6px; }
-      .impact-box .small-box {
-        min-height: 120px;
-        border-radius: 10px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.08);
-      }
-      .impact-box .small-box h3 { font-size: 30px; }
-      .impact-box .small-box p  { font-size: 15px; }
-      .assist-text {
-        font-size: 14px;
-        color: #3c4a64;
-      }
-    ")),
-
-	    ## modify the dashboard's skin color (palette 1)
-	    tags$style(HTML("
-	                       /* logo */
-	                       .skin-blue .main-header .logo {
-	                       background-color: #1F3A93;
-	                       }
-
-	                       /* logo when hovered */
-	                       .skin-blue .main-header .logo:hover {
-	                       background-color: #1F3A93;
-	                       }
-
-	                       /* navbar (rest of the header) */
-	                       .skin-blue .main-header .navbar {
-	                       background-color: #1F3A93;
-	                       }
-
-	                       /* active selected tab in the sidebarmenu */
-	                       .skin-blue .main-sidebar .sidebar .sidebar-menu .active a{
-	                       background-color: #1F3A93;
-	                                 }
-	                       ")),
-
-	    ## override valueBox background colors for palette 1
-	    tags$style(HTML("
-	      .bg-blue {
-	        background-color: #4A90E2 !important;
-	      }
-	      .bg-green {
-	        background-color: #27AE60 !important;
-	      }
-	      .bg-yellow {
-	        background-color: #F1C40F !important;
-	      }
-	    ")),
-
-    ## modify icon size in the sub side bar menu
-    tags$style(HTML("
-                       /* change size of icons in sub-menu items */
-                      .sidebar .sidebar-menu .treeview-menu>li>a>.fa {
-                      font-size: 15px;
-                      }
-
-                      .sidebar .sidebar-menu .treeview-menu>li>a>.glyphicon {
-                      font-size: 13px;
-                      }
-
-                      /* Hide icons in sub-menu items */
-                      .sidebar .sidebar-menu .treeview>a>.fa-angle-left {
-                      display: none;
-                      }
-                      ")),
-    tags$style(HTML("hr {border-top: 1px solid #000000;}")),
-
-    ## to not show error message in shiny
-    tags$style(HTML(".shiny-output-error { visibility: hidden; }")),
-    tags$style(HTML(".shiny-output-error:before { visibility: hidden; }")),
-
-    ## heand dropdown menu size
-    # tags$style(HTML('.navbar-custom-menu>.navbar-nav>li>.dropdown-menu { width:100px;}'))
-    tags$style(HTML(".navbar-custom-menu>.navbar-nav>li:last-child>.dropdown-menu { width:10px; font-size:10px; padding:1px; margin:1px;}")),
-    tags$style(HTML(".navbar-custom-menu> .navbar-nav> li:last-child > .dropdown-menu > h4 {width:0px; font-size:0px; padding:0px; margin:0px;}")),
-    tags$style(HTML(".navbar-custom-menu> .navbar-nav> li:last-child > .dropdown-menu > p {width:0px; font-size:0px; padding:0px; margin:0px;}"))
+    tags$link(rel = "stylesheet", type = "text/css", href = "custom.css")
   ),
 
   ## 3.1 Dashboard body --------------
+  useShinyjs(),
+  uiOutput("step_timeline"),
   tabItems(
-    ## 3.1 Main dashboard ----------------------------------------------------------
     tabItem(
-      tabName = "dashboard",
-      ## contents for the dashboard tab
-      div(
-        id = "main_wait_message",
-        h1("Note, initial load may take up to 10 seconds.",
-          style = "color:darkblue", align = "center"
-        ),
-        tags$hr()
-      ),
-
-      # 1.1 Export/import board ---------------------------
-      # div(class = 'scroller_anchor'),
-      # div(class = 'scroller', ) ,
-
-      h1(paste0("New Zealand trade for the ", maxYear)),
-      fluidRow(
-        valueBoxOutput("ExTotBox") %>% withSpinner(type = 4),
-        valueBoxOutput("ImTotBox"),
-        valueBoxOutput("BlTotBox")
-      ),
-      h2(paste0("Goods")),
-      fluidRow(
-        valueBoxOutput("ExGBox"),
-        valueBoxOutput("ImGBox"),
-        valueBoxOutput("BlGBox")
-      ),
-      h2(paste0("Services")),
-      fluidRow(
-        valueBoxOutput("ExSBox"),
-        valueBoxOutput("ImSBox"),
-        valueBoxOutput("BlSBox")
-      ),
-
-      ## 1.2 Time serise plot ----------------------------------------
-      h2(paste0("New Zealand trade over the past 20 years")),
-      fluidRow(
-        column(width = 6, h4("Goods and services trade", align = "center"), highchartOutput("IEGSLineHc")),
-        column(width = 6, h4("Trade balance", align = "center"), highchartOutput("GSTotalBalanceLineHc"))
-      ),
-
-
-      ## 1.3 Table shows growth rate ---------------------------------
-      h2(paste0("Short, medium, and long term growth")),
-      p("Compound annual growth rate (CAGR) for the past 1, 5, 10 and 20 years"),
-      # fluidRow( h2(paste0("Short, medium, and long term growth")),
-      #          p("Compound annual growth rate (CAGR) for the past 1, 5, 10 and 20 years") ),
-      fluidRow(dataTableOutput("GrowthTab")),
-      div(
-        id = "message_to_show_more",
-        tags$hr(),
-        tags$h3("Click on the 'Show more details' button to display additional information on free trade agreements, and imports/exports by commodities and markets."),
-        actionButton("btn_show_more",
-          paste0(" Show more details"),
-          icon = icon("chevron-circle-down"),
-          style = "padding-top:3px; padding-bottom:3px;padding-left:5px;padding-right:5px;font-size:120% "
-        )
-      ),
-      div(id = "show_more_detail"),
-      shinyjs::hidden(div(
-        id = "load_more_message",
-        tags$hr(),
-        tags$h1("Loading...", align = "center")
-      ))
-    ),
-
-	    ## Financial benchmarking tab
-	    tabItem(
-	      tabName = "fin_bench",
-	      h3("분석 결과"),
-	      fluidRow(
-	        box(
-	          width = 12, status = "success", solidHeader = FALSE,
-	          uiOutput("fin_kpi_row"),
-	          br(),
-	          textOutput("fin_summary"),
-	          br(),
-	          plotlyOutput("fin_ts_plot"),
-	          plotlyOutput("fin_quad_plot"),
-	          plotlyOutput("fin_fc_plot"),
-	          tableOutput("fin_fc_table")
-	        )
-	      )
-	    ),
-
-    tabItem(
-      tabName = "analysis_graph",
-      h3("내 매장 vs 비슷한 업체 한눈 비교"),
-      fluidRow(
-        class = "impact-box",
-        valueBoxOutput("analysis_insight_main", width = 4),
-        valueBoxOutput("analysis_warning", width = 4),
-        valueBoxOutput("analysis_action", width = 4)
-      ),
+      tabName = "tab_data",
       fluidRow(
         box(
-          title = "이번 달 핵심 3줄 요약",
-          width = 8,
-          status = "primary",
-          solidHeader = TRUE,
-          uiOutput("analysis_top3"),
-          div(class = "assist-text", "요약은 최신 연도와 선택된 기업을 기준으로 자동 작성됩니다.")
-        ),
-        box(
-          title = "바로 확인/추천 행동",
-          width = 4,
-          status = "success",
-          solidHeader = TRUE,
-          uiOutput("analysis_actions_friendly"),
-          div(class = "assist-text", "재고회전·ROA·매출 증감에 따라 제안이 달라집니다.")
+          width = 12,
+          title = NULL,
+          solidHeader = FALSE,
+          status = NULL,
+          class = "hero-panel",
+          div(
+            class = "hero-content",
+            div(
+              class = "hero-copy",
+              h1("데이터 업로드하고 재고 예측 시작하기"),
+              p("3단계로 내 쇼핑몰 데이터를 올리고, 진단/예측까지 한 번에 진행해요."),
+              actionButton("cta_upload", "데이터 업로드 시작하기", class = "btn btn-primary btn-lg hero-cta"),
+              p(class = "hero-alt", "또는 상장사 / 데모 데이터로 체험해볼 수 있어요.")
+            ),
+            div(
+              class = "hero-feature-cards",
+              div(class = "hero-feature-card",
+                  tags$span(class = "feature-label", "Why"),
+                  strong("재고 vs. 현금 흐름"),
+                  p("재고가 현금흐름에 미치는 영향을 한 줄로 요약해 드려요.")
+              ),
+              div(class = "hero-feature-card",
+                  tags$span(class = "feature-label", "Diagnosis"),
+                  strong("내 가게 상태 진단"),
+                  p("과재고인지 기회손실인지 1분 안에 파악할 수 있어요.")
+              ),
+              div(class = "hero-feature-card",
+                  tags$span(class = "feature-label", "Prediction"),
+                  strong("예측 & 액션"),
+                  p("다음 달 수요를 예측하고 발주 가이드를 제안해요.")
+              )
+            )
+          )
         )
       ),
       fluidRow(
-        box(
-          title = "데이터 상태/안내",
-          width = 4,
-          status = "warning",
-          solidHeader = TRUE,
-          htmlOutput("analysis_quality", class = "viz-text-lg"),
-          uiOutput("analysis_alerts", class = "viz-text-lg"),
-          tags$hr(),
-          div(class = "viz-text-lg", textOutput("analysis_desc_2")),
-          div(class = "assist-text", "데모 데이터가 자동 채워져 있습니다. 업로드나 DART 불러오기로 교체 가능.")
+        column(
+          width = 9,
+          box(
+            width = 12,
+            title = tagList(
+              tags$span(class = "step-label", "Step 1"),
+              tags$span(class = "step-title-text", "데이터 소스 선택")
+            ),
+            solidHeader = TRUE,
+            status = NULL,
+            class = "step-box",
+            p(class = "assist-text", "내 데이터 업로드, 상장사/DART 불러오기, 데모 데이터 중 하나를 선택하세요."),
+            tabsetPanel(
+              id = "data_source_tabs",
+              type = "tabs",
+              tabPanel(
+                title = "내 파일 업로드",
+                div(
+                  class = "step-section",
+                  fileInput("fin_upload", "엑셀/CSV 업로드", accept = c(".xlsx", ".xls", ".csv")),
+                  div(
+                    class = "upload-guidelines",
+                    downloadButton(
+                      "fin_template",
+                      "샘플 템플릿 다운로드",
+                      class = "btn btn-template btn-sm"
+                    ),
+                    tags$ul(
+                      class = "upload-points",
+                      tags$li("필수 컬럼: 연도, 매출, 재고"),
+                      tags$li("선택 컬럼: SKU, 채널, 순이익 등 정밀 진단용")
+                    )
+                  ),
+                  uiOutput("fin_mapping_ui")
+                )
+              ),
+              tabPanel(
+                title = "상장사 / DART",
+                div(
+                  class = "step-section",
+                  textInput("fin_corp_query", "상장사 검색", placeholder = "예: 한섬, 020000"),
+                  fluidRow(
+                    column(6, actionButton("fin_corp_search", "검색", class = "btn btn-primary btn-block")),
+                    column(6, actionButton("fin_fetch_dart", "DART 불러오기", class = "btn btn-default btn-block"))
+                  ),
+                  selectInput("fin_corp_pick", "상장사 선택", choices = c(), selected = NULL),
+                  tags$div(class = "assist-text", "DART API 키가 없으면 데모 데이터가 자동으로 로드됩니다.")
+                )
+              ),
+              tabPanel(
+                title = "데모 데이터",
+                div(
+                  class = "step-section demo-section",
+                  tags$p("데모 시나리오를 불러와 전체 흐름을 빠르게 체험해보세요."),
+                  tags$ul(
+                    class = "demo-list",
+                    tags$li("여성 의류 쇼핑몰 (트렌드형)"),
+                    tags$li("남성 스트리트 브랜드 (시즌형)"),
+                    tags$li("아동복/완구 (롱테일형)")
+                  ),
+                  actionButton("fin_load_demo", "데모 데이터 로드", class = "btn btn-default"),
+                  tags$div(class = "assist-text", "로드 후 바로 Pre-Check와 진단 단계를 확인할 수 있어요.")
+                )
+              )
+            )
+          ),
+          box(
+            width = 12,
+            title = tagList(
+              tags$span(class = "step-label", "Step 2"),
+              tags$span(class = "step-title-text", "기본 옵션 설정")
+            ),
+            solidHeader = TRUE,
+            status = NULL,
+            class = "step-box",
+            p(class = "assist-text", "예측 기준 연도와 필요한 예측 기간을 선택하세요."),
+            fluidRow(
+              column(
+                width = 6,
+                selectInput(
+                  "global_year",
+                  "기준 연도",
+                  choices = sort(unique(dtf_shiny_commodity_service_ex$Year), decreasing = TRUE),
+                  selected = max(dtf_shiny_commodity_service_ex$Year)
+                )
+              ),
+              column(
+                width = 6,
+                numericInput("fin_forecast_y", "예측 연도 수", value = 3, min = 1, max = 5)
+              )
+            ),
+            tags$div(class = "assist-text", "필수 옵션만 남겨 핵심 설정에 집중할 수 있도록 정리했습니다.")
+          ),
+          box(
+            width = 12,
+            title = tagList(
+              tags$span(class = "step-label", "Step 3"),
+              tags$span(class = "step-title-text", "업로드 & Pre-Check 결과")
+            ),
+            solidHeader = TRUE,
+            status = NULL,
+            class = "step-box",
+            p(class = "assist-text", "업로드 직후 자동으로 Pre-Check가 실행되고, 모든 신호가 정상일 때 다음 단계 버튼이 활성화됩니다."),
+            div(class = "precheck-cards", uiOutput("data_health_signals")),
+            uiOutput("tab_lock_notice"),
+            div(
+              class = "step-actions",
+              actionButton("go_step2_after_upload", "현황 진단으로 이동", class = "btn btn-primary btn-lg"),
+              actionButton("fin_do_forecast", "예측 실행", class = "btn btn-outline btn-lg"),
+              actionLink("back_to_step1", "내 데이터 다시 선택하기", class = "step-link")
+            )
+          )
         ),
-        box(
-          title = "주요 지표/매출 흐름",
-          width = 8,
-          status = "primary",
-          solidHeader = TRUE,
-          uiOutput("analysis_kpi_row"),
-          plotlyOutput("analysis_plot_1"),
-          div(class = "viz-text-lg", textOutput("analysis_delta_note"))
-        )
-      ),
-      fluidRow(
-        box(
-          title = "재고 효율·이익 비교",
-          width = 6,
-          status = "success",
-          solidHeader = TRUE,
-          plotlyOutput("analysis_plot_2"),
-          div(class = "viz-text-lg", textOutput("analysis_desc_1"))
-        ),
-        box(
-          title = "재고/이익 위치 한눈에",
-          width = 6,
-          status = "info",
-          solidHeader = TRUE,
-          plotlyOutput("analysis_plot_3"),
-          div(class = "viz-text-lg", textOutput("analysis_desc_3"))
+        column(
+          width = 3,
+          box(
+            width = 12,
+            title = "이 페이지에서 할 일",
+            solidHeader = TRUE,
+            status = NULL,
+            class = "help-card",
+            tags$ul(
+              class = "help-list",
+              tags$li("1단계: 데이터를 선택하거나 업로드합니다."),
+              tags$li("2단계: 기준 연도와 예측 기간을 정합니다."),
+              tags$li("3단계: Pre-Check 통과 후 진단/예측으로 이동합니다.")
+            )
+          ),
+          box(
+            width = 12,
+            title = "업로드할 파일 예시",
+            solidHeader = TRUE,
+            status = NULL,
+            class = "help-card",
+            tags$ul(
+              class = "help-list",
+              tags$li("연도, 매출, 재고는 반드시 포함"),
+              tags$li("카테고리/SKU가 있으면 세부 진단 가능"),
+              tags$li("엑셀/CSV 모두 지원하며, 첫 행은 헤더로 유지")
+            )
+          ),
+          box(
+            width = 12,
+            title = "자주 묻는 질문",
+            solidHeader = TRUE,
+            status = NULL,
+            collapsible = TRUE,
+            collapsed = TRUE,
+            class = "help-card",
+            tags$details(
+              tags$summary("엑셀 형식은 어떻게 맞추나요?"),
+              tags$p("샘플 템플릿을 내려받아 컬럼명을 맞추면 자동 매핑됩니다.")
+            ),
+            tags$details(
+              tags$summary("연도가 2개뿐인데 가능한가요?"),
+              tags$p("Pre-Check에서 최소 연도 수 안내를 드리며, 3개 이상일 때 예측이 활성화됩니다.")
+            ),
+            tags$details(
+              tags$summary("데이터 품질이 걱정돼요."),
+              tags$p("결측/이상치는 Pre-Check 카드에서 바로 확인 가능합니다.")
+            )
+          )
         )
       )
     ),
 
     tabItem(
-      tabName = "prediction_graph",
-      tags$h3(
-        class = "pred-section-title",
-        style = "font-size: 24px; font-weight: 700; margin-top: 0;",
-        "재고·매출 예측 (쉽게 보기)"
+      tabName = "tab_diagnosis",
+      h3("Step 2. Diagnosis: 과재고인가, 기회손실인가?"),
+      fluidRow(
+        box(
+          width = 12,
+          title = NULL,
+          solidHeader = FALSE,
+          status = NULL,
+          class = "diag-summary-box",
+          uiOutput("diag_status_copy")
+        )
       ),
       fluidRow(
-        class = "impact-box",
-        valueBoxOutput("pred_insight_main", width = 4),
-        valueBoxOutput("pred_warning", width = 4),
-        valueBoxOutput("pred_action_box", width = 4)
+        column(width = 4, uiOutput("fin_kpi_sales")),
+        column(width = 4, uiOutput("fin_kpi_it")),
+        column(width = 4, uiOutput("fin_kpi_roa"))
       ),
       fluidRow(
         box(
-          title = "이번 달 알아두면 좋은 점",
+          title = "BCG 매트릭스 (재고회전율 vs 영업이익률)",
           width = 8,
-          status = "primary",
+          status = NULL,
           solidHeader = TRUE,
-          uiOutput("pred_top3"),
-          div(class = "assist-text", "예측 추세·불확실성·학습 기간을 한 줄씩 정리했습니다.")
+          class = "diag-main-box",
+          plotlyOutput("fin_quad_plot", height = "380px")
         ),
         box(
-          title = "추천 행동/알림",
+          title = "내 위치 해석",
           width = 4,
-          status = "success",
+          status = NULL,
           solidHeader = TRUE,
-          uiOutput("pred_action_simple"),
-          div(class = "assist-text", "아래 품질/정확도 박스에서 데이터 상황을 함께 확인하세요.")
+          class = "diag-main-box diag-interpret-box",
+          div(class = "diag-interpret-header",
+              uiOutput("diag_quadrant_label")
+          ),
+          div(class = "diag-metric-list", uiOutput("diag_metrics")),
+          tags$div(class = "diag-actions", uiOutput("analysis_actions_friendly")),
+          tags$hr(),
+          actionButton("go_to_action", "액션 플랜 보기", icon = icon("arrow-right"), class = "btn btn-primary btn-block")
         )
       ),
       fluidRow(
         box(
-          title = "앞으로 흐름(연도별)",
-          width = 8,
-          status = "primary",
+          title = "추가 진단",
+          width = 12,
+          status = NULL,
           solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = TRUE,
+          class = "diag-extra-box",
+          tabsetPanel(
+            id = "diag_extra_tabs",
+            type = "tabs",
+            tabPanel(
+              "추세 / 비교",
+              fluidRow(
+                box(
+                  title = "매출·재고 추세",
+                  width = 7,
+                  status = NULL,
+                  solidHeader = TRUE,
+                  class = "diag-sub-box",
+                  plotlyOutput("analysis_plot_1"),
+                  div(class = "viz-text-lg", textOutput("analysis_delta_note"))
+                ),
+                box(
+                  title = "재고 효율·이익 비교",
+                  width = 5,
+                  status = NULL,
+                  solidHeader = TRUE,
+                  class = "diag-sub-box",
+                  plotlyOutput("analysis_plot_2"),
+                  div(class = "viz-text-lg", textOutput("analysis_desc_1"))
+                )
+              )
+            ),
+            tabPanel(
+              "데이터 품질 / 알림",
+              fluidRow(
+                box(
+                  title = "데이터 품질/알림",
+                  width = 12,
+                  status = NULL,
+                  solidHeader = TRUE,
+                  class = "diag-sub-box",
+                  htmlOutput("analysis_quality", class = "viz-text-lg"),
+                  uiOutput("analysis_alerts", class = "viz-text-lg"),
+                  div(class = "viz-text-lg", textOutput("analysis_desc_2"))
+                )
+              )
+            ),
+            tabPanel(
+              "벤치마킹 테이블",
+              fluidRow(
+                box(
+                  title = "벤치마킹 테이블",
+                  width = 12,
+                  status = NULL,
+                  solidHeader = TRUE,
+                  class = "diag-sub-box",
+                  tableOutput("fin_fc_table")
+                )
+              )
+            )
+          )
+        )
+      )
+    ),
+
+    tabItem(
+      tabName = "tab_prediction",
+      h3("Step 3. 수요 예측: 다음 달 흐름과 불확실성 보기"),
+      fluidRow(
+        box(
+          width = 12,
+          title = NULL,
+          solidHeader = FALSE,
+          class = "pred-summary-box",
+          uiOutput("pred_summary_card")
+        )
+      ),
+      fluidRow(
+        column(width = 4, uiOutput("pred_kpi_forecast")),
+        column(width = 4, uiOutput("pred_kpi_signal")),
+        column(width = 4, uiOutput("pred_kpi_band"))
+      ),
+      fluidRow(
+        box(
+          title = "이번 달 알아두면 좋은 점",
+          width = 7,
+          solidHeader = TRUE,
+          class = "pred-brief-box",
+          uiOutput("pred_top3"),
+          div(class = "assist-text", "예측 추세·불확실성·학습 기간을 한눈에 요약했습니다.")
+        ),
+        box(
+          title = "추천 행동 / 알림",
+          width = 5,
+          solidHeader = TRUE,
+          class = "pred-brief-box",
+          uiOutput("pred_action_chip"),
+          uiOutput("pred_action_simple"),
+          div(class = "assist-text", "리본 폭이 커지면 보수적으로 발주하고, 작은 폭이면 과감하게 움직여도 좋아요.")
+        )
+      ),
+      fluidRow(
+        box(
+          title = tagList("앞으로 흐름(연도별)", tags$span(class = "pred-meta-note", "기준 : 매출 / 단위 : 억 원")),
+          width = 8,
+          solidHeader = TRUE,
+          class = "pred-main-box",
           plotlyOutput("pred_ts_plot"),
           div(class = "viz-text-lg", textOutput("pred_summary")),
           div(class = "viz-text-lg", textOutput("pred_detail_1")),
-          div(class = "assist-text", "예측 구간(리본)을 함께 보며 여유 재고/부족 재고를 가늠하세요.")
+          div(class = "viz-text-lg", textOutput("pred_interval_note"))
         ),
         box(
-          title = "예측 품질/안내",
+          title = "불확실성 / 정확도",
           width = 4,
-          status = "warning",
           solidHeader = TRUE,
+          class = "pred-main-box pred-uncertainty-box",
           htmlOutput("pred_quality", class = "viz-text-lg"),
           tableOutput("pred_accuracy"),
           uiOutput("pred_risk", class = "viz-text-lg"),
@@ -702,139 +477,152 @@ body <- dashboardBody(
       ),
       fluidRow(
         box(
-          title = "예측 오차/폭",
+          title = "추가 분석",
           width = 12,
-          status = "success",
           solidHeader = TRUE,
-          plotlyOutput("pred_fc_error_plot"),
-          div(class = "viz-text-lg", textOutput("pred_resid_note"))
-        )
-      ),
-      tags$hr(),
-      tags$h3(
-        class = "pred-section-title",
-        style = "font-size: 24px; font-weight: 700; margin: 0 0 20px;",
-        "재고·매출 예측 (상세 보기)"
-      ),
-      fluidRow(
-        valueBoxOutput("fin_kpi_sales"),
-        valueBoxOutput("fin_kpi_it"),
-        valueBoxOutput("fin_kpi_roa")
-      ),
-      br(),
-      fluidRow(
-        box(
-          title = "리스크 & 권장 행동",
-          width = 6,
-          status = "warning",
-          solidHeader = TRUE,
-          plotlyOutput("pred_risk_gauge", height = "230px"),
-          div(class = "viz-text-lg", uiOutput("pred_risk")),
-          tags$hr(),
-          plotlyOutput("pred_growth_bar", height = "230px"),
-          div(class = "viz-text-lg", uiOutput("pred_action"))
-        ),
-        box(
-          title = "Trend / 시즌 컴포넌트",
-          width = 6,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_comp_plot_plus", height = "320px"),
-          div(class = "viz-text-lg", textOutput("pred_summary_plus"))
-        )
-      ),
-      fluidRow(
-        box(
-          title = "예측 품질 상세",
-          width = 6,
-          status = "info",
-          solidHeader = TRUE,
-          plotlyOutput("pred_accuracy_plot", height = "260px"),
-          div(class = "assist-text", "MAE/RMSE/SMAPE로 모델 성능을 다시 점검하세요."),
-          div(class = "viz-text-lg", textOutput("pred_accuracy_note")),
-          div(class = "viz-text-lg", textOutput("pred_detail_1_plus"))
-        ),
-        box(
-          title = "예측 오차 박스플롯",
-          width = 6,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_error_box", height = "320px"),
-          div(class = "viz-text-lg", textOutput("pred_error_box_note"))
-        )
-      ),
-      fluidRow(
-        box(
-          title = "누적 매출 (실제 vs 예측)",
-          width = 12,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_cum_plot", height = "300px"),
-          div(class = "viz-text-lg", textOutput("pred_detail_2_plus")),
-          div(class = "assist-text", textOutput("pred_cum_note"))
-        )
-      ),
-      fluidRow(
-        box(
-          title = "예측 오차 분포",
-          width = 12,
-          status = "primary",
-          solidHeader = TRUE,
-          plotlyOutput("pred_error_hist", height = "260px"),
-          div(class = "viz-text-lg", textOutput("pred_error_hist_note"))
+          collapsible = TRUE,
+          collapsed = TRUE,
+          class = "pred-extra-box",
+          tabsetPanel(
+            id = "pred_extra_tabs",
+            type = "tabs",
+            tabPanel(
+              "정확도 · 세부 지표",
+              fluidRow(
+                box(
+                  title = "리스크 & 권장 행동",
+                  width = 4,
+                  solidHeader = TRUE,
+                  class = "pred-detail-box",
+                  plotlyOutput("pred_risk_gauge", height = "230px"),
+                  div(class = "viz-text-lg", uiOutput("pred_risk")),
+                  tags$hr(),
+                  plotlyOutput("pred_growth_bar", height = "180px"),
+                  div(class = "viz-text-lg", uiOutput("pred_action"))
+                ),
+                box(
+                  title = "정확도/오차 분포",
+                  width = 4,
+                  solidHeader = TRUE,
+                  class = "pred-detail-box",
+                  plotlyOutput("pred_accuracy_plot", height = "260px"),
+                  div(class = "assist-text", "평균 오차 수량 · 정확도(%) · 최근 잔차로 성능을 확인합니다."),
+                  div(class = "viz-text-lg", textOutput("pred_accuracy_note")),
+                  plotlyOutput("pred_error_box", height = "220px"),
+                  div(class = "viz-text-lg", textOutput("pred_error_box_note"))
+                ),
+                box(
+                  title = "추가 지표",
+                  width = 4,
+                  solidHeader = TRUE,
+                  class = "pred-detail-box",
+                  plotlyOutput("pred_comp_plot_plus", height = "220px"),
+                  div(class = "viz-text-lg", textOutput("pred_summary_plus")),
+                  plotlyOutput("pred_error_hist", height = "180px"),
+                  div(class = "viz-text-lg", textOutput("pred_error_hist_note"))
+                )
+              ),
+              fluidRow(
+                box(
+                  title = "누적 매출 (실제 vs 예측)",
+                  width = 6,
+                  solidHeader = TRUE,
+                  class = "pred-detail-box",
+                  plotlyOutput("pred_cum_plot", height = "260px"),
+                  div(class = "viz-text-lg", textOutput("pred_detail_2_plus")),
+                  div(class = "assist-text", textOutput("pred_cum_note"))
+                ),
+                box(
+                  title = "예측 오차/폭",
+                  width = 6,
+                  solidHeader = TRUE,
+                  class = "pred-detail-box",
+                  plotlyOutput("pred_fc_error_plot"),
+                  div(class = "viz-text-lg", textOutput("pred_resid_note"))
+                )
+              ),
+              br()
+            )
+          )
         )
       )
     ),
 
-    ## Financial benchmarking add-on tabs (teammate work) --------------------------
     tabItem(
-      tabName = "fin_detail_graph",
-      h3("내 기업 상세 분석 (+)"),
+      tabName = "tab_action",
+      h3("Step 4. Action: 발주/액션 플랜"),
       fluidRow(
-        valueBoxOutput("fin_kpi_sales"),
-        valueBoxOutput("fin_kpi_it"),
-        valueBoxOutput("fin_kpi_roa")
-    ),
-
-      br(),
+        box(
+          width = 12,
+          title = NULL,
+          solidHeader = FALSE,
+          class = "action-summary-box",
+          uiOutput("action_summary_card")
+        )
+      ),
+      fluidRow(
+        column(width = 4, uiOutput("action_kpi_target")),
+        column(width = 4, uiOutput("action_kpi_gap")),
+        column(width = 4, uiOutput("action_kpi_cash"))
+      ),
+      fluidRow(
+        box(
+          width = 12,
+          title = "시뮬레이션 설정",
+          solidHeader = TRUE,
+          class = "action-control-box",
+          sliderInput("target_turn", "목표 재고회전율", value = 3, min = 0, max = 10, step = 0.1),
+          sliderInput("target_growth", "매출 성장 목표 (%)", value = 10, min = -100, max = 300, step = 1),
+          tags$div(class = "assist-text", "슬라이더를 조정하면 위 요약 카드와 아래 그래프들이 자동으로 업데이트됩니다."),
+          actionButton("apply_targets", "신호등 업데이트", class = "btn btn-primary"),
+          tags$div(class = "assist-text", "목표 값을 저장하면 다음 액션 권장안과 리포트에도 반영됩니다.")
+        )
+      ),
       fluidRow(
         box(
           title = "내 기업 추이",
           width = 6,
-          status = "primary",
           solidHeader = TRUE,
-          plotlyOutput("detail_plot_1", height = "320px")
+          class = "action-chart-box",
+          plotlyOutput("detail_plot_1", height = "350px")
         ),
         box(
           title = "연도별 성장률 + 재고 비율",
           width = 6,
-          status = "primary",
           solidHeader = TRUE,
-          plotlyOutput("detail_plot_2", height = "320px")
+          class = "action-chart-box",
+          plotlyOutput("detail_plot_2", height = "350px")
         )
       ),
       fluidRow(
         box(
           title = "재무 구조",
           width = 6,
-          status = "primary",
           solidHeader = TRUE,
+          class = "action-chart-box",
           plotlyOutput("detail_plot_3", height = "320px")
         ),
         box(
           title = "예측(실제 + 예상)",
           width = 6,
-          status = "primary",
           solidHeader = TRUE,
+          class = "action-chart-box",
           plotlyOutput("detail_plot_4", height = "320px")
         )
       ),
       fluidRow(
         box(
-          title = "설명",
-          width = 12,
-          status = "primary",
+          title = "다음 액션",
+          width = 5,
           solidHeader = TRUE,
+          class = "action-text-box",
+          htmlOutput("detail_action")
+        ),
+        box(
+          title = "설명",
+          width = 7,
+          solidHeader = TRUE,
+          class = "action-text-box",
           htmlOutput("detail_desc_1"),
           br(),
           htmlOutput("detail_desc_2"),
@@ -844,253 +632,135 @@ body <- dashboardBody(
       ),
       fluidRow(
         box(
-          title = "액션 플랜",
+          title = "리포트 공유",
           width = 12,
-          status = "primary",
           solidHeader = TRUE,
-          htmlOutput("detail_action")
+          class = "action-share-box",
+          tags$p("현재 시나리오 설정과 결과 요약을 포함한 보고서를 내려받을 수 있습니다."),
+          downloadButton("report_pdf", "최종 보고서 다운로드", class = "btn btn-success btn-lg"),
+          downloadButton("report_csv", "CSV 내보내기", class = "btn btn-default"),
+          tags$div(class = "assist-text", "PDF/CSV에는 시뮬레이션 설정, 요약 수치, 주요 그래프 캡션이 포함됩니다.")
         )
       )
     ),
 
-    ## 3.2.1 Export/import commodities/services intelligence ------------------------
-    tabItem(
-      tabName = "ci_exports",
-      ## 2.1 Help text first --------------
-      div(
-        id = "ci_howto_ex",
-        howto_ci()
-      ),
-
-      ## 3... wait message ------
-      hidden(
-        div(
-          id = "wait_message_ci_ex",
-          h2("I am preparing the report now and only for you .....")
-        )
-      ),
-
-      ## divs for pre-defined commodity groups -----------------
-      tags$div(id = "body_ex"),
-      tags$div(id = "body_growth_ex"),
-      shinyjs::hidden(div(
-        id = "body_ci_market_loading_message",
-        tags$hr(),
-        tags$h1("Generating reports...", align = "center")
-      )),
-      tags$div(id = "body_ci_markets_ex"),
-
-
-      ## divs for self-defined commodity groups -----------------
-      tags$div(id = "body_ex_self_defined"),
-      tags$div(id = "body_growth_ex_self_defined"),
-      shinyjs::hidden(div(
-        id = "body_ci_market_loading_message_self_define",
-        tags$hr(),
-        tags$h1("Generating reports...", align = "center")
-      )),
-      tags$div(id = "body_ci_markets_ex_self_defined")
-    ),
-
-    ## 3.2.2 Export/import commodities/services intelligence ------------------------
-    tabItem(
-      tabName = "ci_imports",
-      ## 3.1 Help text first ---------------------
-      div(
-        id = "ci_howto_im",
-        howto_ci()
-      ),
-
-      ## 3... wait message ------
-      hidden(
-        div(
-          id = "wait_message_ci_im",
-          h2("I am preparing the report now and only for you .....")
-        )
-      ),
-
-      ## 3.1 div for pre-defined HS group reports ----------------------
-      tags$div(id = "body_im"),
-      tags$div(id = "body_growth_im"),
-      tags$div(id = "body_ci_markets_im"),
-
-      ## 3.x div for self-defined HS group reports ----------------------
-      tags$div(id = "body_im_self_defined"),
-      tags$div(id = "body_growth_im_self_defined"),
-      tags$div(id = "body_ci_markets_im_self_defined")
-    ),
-
-
-    ## 3.2.3 Quick Intel by HS codes ---------------
-    tabItem(
-      tabName = "ci_intel_by_hs",
-      tags$div(
-        id = "ci_intel_by_hs_hstable",
-        fluidRow(
-          h1("Quick intelligence on export/import by using HS codes"),
-          h3("How to:"),
-          howto_hs_finder(),
-          dataTableOutput("HSCodeTable")
-        )
-      ) # ,
-      , div(
-        id = "clear_table",
-        # tags$hr(),
-        # tags$h3( "Click on the 'Show more details' button to display addtional information on free trade agreements, and imports/exports by commodities and markets." ),
-        actionButton("action_bnt_ClearTable",
-          paste0(" Clear all selections"),
-          icon = icon("refresh"),
-          style = "padding-top:3px; padding-bottom:3px;padding-left:5px;padding-right:5px;font-size:120% "
-        )
-      ),
-      shinyjs::hidden(div(
-        id = "ci_intel_hs_loading_message",
-        tags$hr(),
-        tags$h1("Generating reports...", align = "center")
-      )),
-      tags$div(id = "ci_intel_by_hs_toadd"),
-      shinyjs::hidden(div(
-        id = "ci_intel_hs_loading_message_intl",
-        tags$hr(),
-        tags$h1("Generating reports...", align = "center")
-      )),
-      tags$div(id = "ci_intel_by_hs_toadd_intl")
-    ),
-
-    ## 3.3 country intellgence -----------------------------------------------------
-    tabItem(
-      tabName = "country_intel",
-      ## 3.3.1 Help text first --------------
-      div(
-        id = "country_howto",
-        howto_country()
-      ),
-
-      ## 3... wait message ------
-      hidden(
-        div(
-          id = "wait_message_country_intel",
-          h2("I am preparing the report now and only for you .....")
-        )
-      ),
-
-      ## 3... div to holder created UIs ------
-      tags$div(id = "country_name"),
-      tags$div(id = "country_info"),
-      tags$div(id = "country_trade_summary"),
-      tags$div(id = "country_appendix")
-    ),
-
-    ## 3.4 HS code finder ------------------------------
-    # tabItem( tabName = 'hs_finder',
-    #          div( id = 'hs_code_finder_table' ,
-    #               fluidRow( h1( "Level 2, 4 and 6 HS code table" ),
-    #                         h3( "How to:"),
-    #                         howto_hs_finder(),
-    #                         dataTableOutput("HSCodeTable")
-    #                         )
-    #               )
-    #          ),
-
-    ## 3.5 Help and info -------------------------------
-    tabItem(
-      tabName = "help",
-      ## 3.5.1 Data sources ---------------
-      div(
-        id = "help_contact",
-        contact()
-      ),
-      div(
-        id = "help_data_source",
-        data_source()
-      ),
-      div(
-        id = "when_to_update",
-        when_update()
-      ),
-      div(
-        id = "help_hs_code",
-        hs_code_explain()
-      ),
-      div(
-        id = "help_trade_term",
-        trade_terms()
-      ),
-      div(
-        id = "help_confidential_data",
-        confidential_trade_data()
-      ),
-      div(
-        id = "help_urgent_update",
-        urgent_updates()
-      )
-    ),
-
-    ## 3.6 Monthly update from Stats NZ --------------
-    tabItem(
-      tabName = "monthly_update",
-      div(
-        id = "monthly_update",
-        fluidRow(htmlOutput("MonthlyUpdate"))
-      )
-    )
-    ,
     tabItem(
       tabName = "usage_guide",
       h3("이 대시보드를 활용하는 방법"),
       fluidRow(
         box(
-          title = "1단계: 데이터 준비",
+          title = "빠른 시작",
           width = 12,
-          status = "primary",
           solidHeader = TRUE,
-          tags$ul(
-            tags$li("사이드바에서 상장사 검색 또는 `내 가게 파일 업로드`로 데이터를 불러옵니다."),
-            tags$li("필요 시 `DART 불러오기`나 `데모 데이터 로드` 버튼을 눌러 예시 데이터를 확인합니다."),
-            tags$li("예측 실행 전 최소 3개 연도의 매출 데이터가 포함되어 있는지 확인하세요.")
+          class = "usage-quickstart-box",
+          tags$p("이 대시보드를 처음 쓰신다면 아래 순서만 따라오세요."),
+          tags$ol(
+            class = "quickstart-list",
+            tags$li("데이터 준비 탭에서 엑셀/CSV를 업로드하거나 상장사/데모 데이터를 불러옵니다."),
+            tags$li("현황 진단과 수요 예측 탭을 순서대로 열어 결과를 확인합니다."),
+            tags$li("발주/액션 플랜 탭에서 슬라이더를 움직이며 시나리오를 조정합니다.")
+          ),
+          actionButton("go_to_tab_data", "1단계로 이동", class = "btn btn-primary")
+        )
+      ),
+      fluidRow(
+        box(
+          title = "단계별 안내",
+          width = 12,
+          solidHeader = TRUE,
+          class = "usage-accordion-box",
+          bsCollapse(
+            id = "usage_collapse",
+            multiple = FALSE,
+            open = "step1",
+            bsCollapsePanel(
+              title = "1단계: 데이터 준비",
+              value = "step1",
+              tags$ul(
+                tags$li("상장사 검색 또는 ‘내 가게 파일 업로드’로 데이터를 불러옵니다."),
+                tags$li("업로드 후 Pre-Check에서 연도/필수 컬럼 이상 여부를 확인합니다."),
+                tags$li("정상일 때만 ‘현황 진단으로 이동’ 버튼이 활성화됩니다.")
+              ),
+              actionLink("go_to_step1", "데이터 준비 탭 열기")
+            ),
+            bsCollapsePanel(
+              title = "2단계: 현황 진단",
+              value = "step2",
+              tags$ul(
+                tags$li("KPI/BCG/트렌드로 현재 위치를 한눈에 확인합니다."),
+                tags$li("초록/노랑/빨강 신호등으로 이번 시즌 리스크를 확인합니다."),
+                tags$li("이 단계에서 1차 발주/프로모션 여부를 결정할 수 있습니다.")
+              ),
+              actionLink("go_to_step2", "현황 진단 탭 열기")
+            ),
+            bsCollapsePanel(
+              title = "3단계: AI 수요 예측",
+              value = "step3",
+              tags$ul(
+                tags$li("다음 해/다음 달 예상 매출과 불확실성 리본을 확인합니다."),
+                tags$li("핵심 상품의 예측 구간(상승/하락)을 시각적으로 비교합니다."),
+                tags$li("SKU/채널별 과다/과소 예측 구간을 탐색합니다.")
+              ),
+              actionLink("go_to_step3", "수요 예측 탭 열기")
+            ),
+            bsCollapsePanel(
+              title = "4단계: 의사결정 & 공유",
+              value = "step4",
+              tags$ul(
+                tags$li("목표 턴/성장률을 조정해 What-if 시뮬레이션을 합니다."),
+                tags$li("발주/액션 플랜에서 추천 행동 리스트를 확인합니다."),
+                tags$li("PDF/CSV로 내보내 팀/외부와 공유합니다.")
+              ),
+              actionLink("go_to_step4", "액션 플랜 탭 열기")
+            )
           )
         )
       ),
       fluidRow(
         box(
-          title = "2단계: 예측 실행 & 빠른 진단",
+          title = "FAQ",
           width = 12,
-          status = "success",
           solidHeader = TRUE,
-          tags$p("`예측 탭`의 ‘쉽게 보기’ 섹션은 경영진이 빠르게 판단할 수 있도록 요약 인사이트를 제공합니다."),
+          class = "usage-faq-box",
           tags$ul(
-            tags$li("인사이트/경고/추천 행동 valueBox를 먼저 확인해 이번 시즌 핵심 메시지를 파악합니다."),
-            tags$li("예측 품질·오차 박스를 통해 데이터 신뢰도를 체크합니다."),
-            tags$li("이 단계에서 1차 발주/프로모션 여부를 결정할 수 있습니다.")
+            tags$li(
+              tags$strong("Q. 데이터 형식이 헷갈려요."),
+              tags$p("데이터 준비 탭에서 샘플 템플릿을 다운로드해 동일한 구조로 채워주세요.")
+            ),
+            tags$li(
+              tags$strong("Q. 예측 값이 이상해 보여요."),
+              tags$p("학습 연도가 3개 미만이면 정확도가 떨어질 수 있습니다. 데이터 기간을 늘려주세요.")
+            ),
+            tags$li(
+              tags$strong("Q. 리포트는 어디에서 다운받나요?"),
+              tags$p("액션 플랜 탭 맨 아래에서 PDF/CSV를 내려받을 수 있습니다.")
+            )
           )
-        )
-      ),
+        ),
       fluidRow(
         box(
-          title = "3단계: 상세 검증",
+          title = "용어 설명",
           width = 12,
-          status = "info",
           solidHeader = TRUE,
-          tags$p("같은 예측 탭의 ‘상세 보기’ 구간 또는 내 기업 상세 분석 탭을 활용해 모델 근거를 검증하세요."),
-          tags$ul(
-            tags$li("예측 밴드·Trend/시즌 플롯으로 패턴과 불확실성을 비교합니다."),
-            tags$li("누적 매출·잔차 박스플롯·오차 분포로 편향 구간을 식별합니다."),
-            tags$li("리스크 게이지와 성장률 막대를 통해 발주/재고 시나리오를 시각적으로 비교합니다.")
+          class = "usage-glossary-box",
+          tags$dl(
+            tags$dt("SKU"),
+            tags$dd("Stock Keeping Unit의 약자로, 재고를 구분하는 최소 단위(예: 색상/사이즈 조합)입니다."),
+            tags$dt("Pre-Check"),
+            tags$dd("업로드한 데이터가 필수 컬럼과 최소 연도 수를 충족하는지 자동으로 점검하는 단계입니다."),
+            tags$dt("재고회전율"),
+            tags$dd("연간 매출원가를 평균 재고로 나눈 지표로, 재고가 얼마나 빠르게 팔리는지 나타냅니다."),
+            tags$dt("리본/불확실성"),
+            tags$dd("예측값 주변의 신뢰 구간으로, 값이 넓을수록 변동성이 크다는 의미입니다."),
+            tags$dt("ROA"),
+            tags$dd("Return on Assets의 약자로 자산 대비 이익률입니다. 순이익을 총자산으로 나누어 계산하며, 자산 활용 효율성을 나타냅니다."),
+            tags$dt("BCG 매트릭스"),
+            tags$dd("재고회전율과 영업이익률을 기준으로 사업을 분류하는 그래프입니다. 캐시카우/스타/도그 구간 등으로 현재 위치를 파악합니다."),
+            tags$dt("리드타임"),
+            tags$dd("주문 이후 제품을 공급받기까지 걸리는 시간입니다. 수요가 늘거나 줄 때 리드타임을 감안해 발주해야 합니다.")
           )
         )
-      ),
-      fluidRow(
-        box(
-          title = "4단계: 의사결정 & 공유",
-          width = 12,
-          status = "warning",
-          solidHeader = TRUE,
-          tags$ul(
-            tags$li("추천 행동과 액션 플랜을 참고해 발주 계획·프로모션 전략을 문서화합니다."),
-            tags$li("팀원에게 공유할 때는 ‘쉽게 보기 → 상세 보기 → 액션 플랜’ 순으로 설명하면 이해가 빠릅니다."),
-            tags$li("새로운 데이터가 들어오면 1단계부터 반복하여 최신 계획을 유지하세요.")
-          )
-        )
+      )
       )
     )
   )
