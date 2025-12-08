@@ -12225,17 +12225,44 @@ server <-
 
       output$data_health_signals <- renderUI({
          h <- data_health()
-         mk_box <- function(title, value, status, subtitle = NULL) {
-            color <- switch(status, green = "green", red = "red", yellow = "yellow", "blue")
-            valueBox(value = value, subtitle = subtitle, color = color, icon = NULL)
+         mk_card <- function(icon, title, desc, status) {
+            div(
+               class = paste("precheck-card", status),
+               div(class = "precheck-icon", icon),
+               h4(title),
+               p(desc)
+            )
          }
-         null_status <- if (is.na(h$nulls)) "yellow" else if (h$nulls > 0) "red" else "green"
-         year_status <- if (h$year_count >= 3) "green" else if (h$year_count > 0) "yellow" else "blue"
-         forecast_status <- if (!is.null(values$forecast_res)) "green" else if (h$year_count >= 3) "yellow" else "red"
-         fluidRow(
-            mk_box("Null/결측", if (is.na(h$nulls)) "점검 중" else if (h$nulls > 0) "🔴 결측 발견" else "🟢 이상 없음", null_status, "필수 컬럼 기준"),
-            mk_box("연도 커버리지", if (h$year_count == 0) "데이터 없음" else paste0(h$year_count, "개 연도"), year_status, "예측 최소 3개 연도 권장"),
-            mk_box("예측 준비도", if (forecast_status == "green") "🟢 실행 가능" else "업로드/연도 확보 필요", forecast_status, "리본 포함 예측")
+         null_status <- if (is.na(h$nulls)) "pending" else if (h$nulls > 0) "alert" else "ok"
+         null_desc <- if (is.na(h$nulls)) {
+            "업로드하면 자동으로 결측을 점검해요."
+         } else if (h$nulls > 0) {
+            "필수 컬럼에 결측이 있어 보완이 필요합니다."
+         } else {
+            "필수 컬럼에서 결측이 발견되지 않았습니다."
+         }
+         year_status <- if (h$year_count >= 3) "ok" else if (h$year_count > 0) "warn" else "pending"
+         year_desc <- if (h$year_count == 0) {
+            "최소 1개 파일을 업로드하면 연도 범위를 계산합니다."
+         } else if (h$year_count < 3) {
+            "예측을 위해 3개 이상 연도를 확보해주세요."
+         } else {
+            paste0(h$year_count, "개 연도로 예측을 준비할 수 있습니다.")
+         }
+         forecast_ready <- !is.null(values$forecast_res)
+         forecast_status <- if (forecast_ready) "ok" else if (h$year_count >= 3) "warn" else "alert"
+         forecast_desc <- if (forecast_ready) {
+            "이제 ‘현황 진단’ 또는 ‘예측 실행’을 눌러 결과를 확인하세요."
+         } else if (h$year_count >= 3) {
+            "예측 실행 버튼을 눌러 리본 포함 전망을 생성하세요."
+         } else {
+            "연도 3개 이상 확보 후 예측 실행이 가능합니다."
+         }
+         div(
+            class = "precheck-card-grid",
+            mk_card(if (null_status == "ok") "🟢" else if (null_status == "alert") "⚠️" else "⌛", "데이터 이상 여부", null_desc, null_status),
+            mk_card("📅", if (h$year_count == 0) "연도 데이터 없음" else paste0(h$year_count, "개 연도 확보"), year_desc, year_status),
+            mk_card("▶️", if (forecast_ready) "예측 실행 가능" else "예측 준비 중", forecast_desc, forecast_status)
          )
       })
 
@@ -12471,54 +12498,129 @@ server <-
       })
 
       ## Additional KPI boxes for teammate tabs
-      output$fin_kpi_sales <- renderValueBox({
+      output$fin_kpi_sales <- renderUI({
          df <- fin_combined_df()
          fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
          latest_year <- max(df$year, na.rm = TRUE)
          latest <- df %>% filter(.data$year == latest_year)
+         prev_year <- suppressWarnings(max(df$year[df$year < latest_year], na.rm = TRUE))
+         prev <- if (is.finite(prev_year)) df %>% filter(.data$year == prev_year) else NULL
          sales <- sum(latest$sales, na.rm = TRUE)
+         prev_sales <- if (!is.null(prev) && nrow(prev)) sum(prev$sales, na.rm = TRUE) else NA_real_
+         delta <- if (!is.na(prev_sales) && prev_sales != 0) (sales - prev_sales) / prev_sales else NA_real_
          formatted <- scales::label_number(scale_cut = scales::cut_short_scale())(sales)
-         valueBox(
-            value = HTML(sprintf(
-               "<span class='fin-kpi-title'>최근 연도 매출</span><span class='fin-kpi-value'>%s</span>",
-               formatted
-            )),
-            subtitle = NULL,
-            color = "blue"
+         delta_txt <- if (is.na(delta)) "전년 데이터 부족" else paste0("전년 대비 ", scales::percent(delta, accuracy = 0.1))
+         tagList(
+            div(class = "diag-kpi-card",
+                div(class = "kpi-label", paste0("최근 연도 매출 (", latest_year, ")")),
+                div(class = "kpi-value", formatted),
+                div(class = "kpi-sub", delta_txt)
+            )
          )
       })
 
-      output$fin_kpi_it <- renderValueBox({
+      output$fin_kpi_it <- renderUI({
          df <- fin_combined_df()
          fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
          latest_year <- max(df$year, na.rm = TRUE)
          latest <- df %>% filter(.data$year == latest_year)
          it <- mean(latest$inventory_turnover, na.rm = TRUE)
          it_txt <- if (is.na(it)) "자료 부족" else sprintf("%.1f배", it)
-         valueBox(
-            value = HTML(sprintf(
-               "<span class='fin-kpi-title'>재고자산회전율</span><span class='fin-kpi-value'>%s</span>",
-               it_txt
-            )),
-            subtitle = NULL,
-            color = "green"
+         diag <- values$diagnosis_res
+         avg_txt <- if (!is.null(diag) && !is.na(diag$avg_turnover)) sprintf("업종 평균 %.1f배", diag$avg_turnover) else "업종 평균 정보 부족"
+         div(
+            class = "diag-kpi-card",
+            div(class = "kpi-label", "재고자산회전율"),
+            div(class = "kpi-value", it_txt),
+            div(class = "kpi-sub", avg_txt)
          )
       })
 
-      output$fin_kpi_roa <- renderValueBox({
+      output$fin_kpi_roa <- renderUI({
          df <- fin_combined_df()
          fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
          latest_year <- max(df$year, na.rm = TRUE)
          latest <- df %>% filter(.data$year == latest_year)
          roa <- mean(latest$roa, na.rm = TRUE)
          roa_txt <- if (is.na(roa)) "자료 부족" else scales::percent(roa, accuracy = 0.1)
-         valueBox(
-            value = HTML(sprintf(
-               "<span class='fin-kpi-title'>ROA</span><span class='fin-kpi-value'>%s</span>",
-               roa_txt
-            )),
-            subtitle = NULL,
-            color = "yellow"
+         diag <- values$diagnosis_res
+         avg_txt <- if (!is.null(diag) && !is.na(diag$avg_margin)) {
+            paste0("업종 평균 ", scales::percent(diag$avg_margin, accuracy = 0.1))
+         } else "업종 평균 정보 부족"
+         div(
+            class = "diag-kpi-card",
+            div(class = "kpi-label", "ROA"),
+            div(class = "kpi-value", roa_txt),
+            div(class = "kpi-sub", avg_txt)
+         )
+      })
+
+      output$diag_status_copy <- renderUI({
+         res <- values$diagnosis_res
+         if (is.null(res)) {
+            return(div(class = "diag-summary-card", div(class = "diag-summary-text", tags$p("데이터를 업로드하면 진단 결과를 요약합니다."))))
+         }
+         status_class <- if (identical(res$quadrant, "Dog")) "danger" else if (identical(res$quadrant, "Cash Cow")) "success" else "neutral"
+         status_label <- if (identical(res$quadrant, "Dog")) "과재고 위험" else if (identical(res$quadrant, "Cash Cow")) "안정 구간" else "진단 중"
+         meta <- paste0(
+            "기준 연도 ", res$latest_year,
+            " · 업종 평균 턴 ", sprintf("%.1f배", res$avg_turnover),
+            " · 평균 이익률 ", scales::percent(res$avg_margin, accuracy = 0.1)
+         )
+         div(
+            class = "diag-summary-card",
+            tags$span(class = paste("diag-status-pill", status_class), status_label),
+            div(
+               class = "diag-summary-text",
+               tags$h4(res$message),
+               tags$p("재고 속도와 이익률을 동시에 점검해 최적 상태를 유지하세요."),
+               div(class = "diag-summary-meta", meta)
+            )
+         )
+      })
+
+      output$diag_quadrant_label <- renderUI({
+         res <- values$diagnosis_res
+         fin_validate(fin_need(!is.null(res), "데이터를 불러오세요"))
+         cls <- if (identical(res$quadrant, "Dog")) "diag-status-pill danger" else if (identical(res$quadrant, "Cash Cow")) "diag-status-pill success" else "diag-status-pill neutral"
+         label_txt <- if (identical(res$quadrant, "Dog")) "과재고 위험 구간" else if (identical(res$quadrant, "Cash Cow")) "건강 구간" else "진단 정보 부족"
+         tags$span(class = cls, label_txt)
+      })
+
+      output$diag_metrics <- renderUI({
+         res <- values$diagnosis_res
+         fin_validate(fin_need(!is.null(res), "데이터를 불러오세요"))
+         turn_txt <- if (is.na(res$user_turnover)) "N/A" else sprintf("%.1f", res$user_turnover)
+         turn_avg_txt <- if (is.na(res$avg_turnover)) "N/A" else sprintf("%.1f", res$avg_turnover)
+         margin_txt <- ifelse(is.na(res$user_margin), "N/A", scales::percent(res$user_margin, accuracy = 0.1))
+         margin_avg_txt <- scales::percent(res$avg_margin, accuracy = 0.1)
+         msg_turn <- if (is.na(res$user_turnover)) {
+            "재고 회전율 계산 불가"
+         } else if (res$user_turnover < res$avg_turnover) {
+            "재고 회전이 느립니다. 할인 판매를 고려하세요."
+         } else {
+            "재고 회전이 업종 평균 이상입니다."
+         }
+         msg_margin <- if (is.na(res$user_margin)) {
+            "이익률 계산 불가"
+         } else if (res$user_margin < res$avg_margin) {
+            "이익률이 업종 평균보다 낮습니다. 마진 회복 액션이 필요합니다."
+         } else {
+            "이익률이 업종 평균 이상입니다."
+         }
+         tagList(
+            div(
+               class = "diag-metric-row",
+               div(class = "metric-label", "재고 턴"),
+               div(class = "metric-value", paste0(turn_txt, "회")),
+               div(class = "metric-note", paste0("업종 평균 ", turn_avg_txt, "회 · ", msg_turn))
+            ),
+            div(
+               class = "diag-metric-row",
+               div(class = "metric-label", "이익률"),
+               div(class = "metric-value", margin_txt),
+               div(class = "metric-note", paste0("업종 평균 ", margin_avg_txt, " · ", msg_margin))
+            )
          )
       })
 
@@ -12926,7 +13028,44 @@ server <-
          values$action_plan <- action_plan_calc()
       })
 
-      output$action_target_box <- renderValueBox({
+      output$action_summary_card <- renderUI({
+         plan <- action_plan_calc()
+         fin_validate(fin_need(!is.null(plan), "데이터를 불러오세요"))
+         reduction <- plan$reduction
+         status <- if (is.null(reduction) || !is.finite(reduction)) {
+            "neutral"
+         } else if (reduction > 0) {
+            "danger"
+         } else if (reduction < 0) {
+            "success"
+         } else {
+            "neutral"
+         }
+         status_label <- switch(
+            status,
+            danger = "과재고 정리 필요",
+            success = "재고 추가 확보",
+            "재고 정상 범위"
+         )
+         desc <- "목표 재고회전율과 매출 성장률에 따른 발주/현금 영향을 요약합니다."
+         meta <- paste0(
+            "목표 턴 ", if (!is.null(input$target_turn)) input$target_turn else "N/A",
+            "회 · 성장 목표 ", if (!is.null(input$target_growth)) input$target_growth else 0, "%",
+            if (!is.null(plan$latest_year)) paste0(" · 기준 연도 ", plan$latest_year) else ""
+         )
+         div(
+            class = "action-summary-card",
+            tags$span(class = paste("action-status-pill", status), status_label),
+            div(
+               class = "action-summary-text",
+               tags$h4("현재 시나리오 요약"),
+               tags$p(desc),
+               div(class = "action-summary-meta", meta)
+            )
+         )
+      })
+
+      output$action_kpi_target <- renderUI({
          plan <- action_plan_calc()
          fin_validate(fin_need(!is.null(plan), "데이터를 불러오세요"))
          val_txt <- if (is.null(plan$target_inventory) || is.na(plan$target_inventory)) {
@@ -12934,36 +13073,34 @@ server <-
          } else {
             scales::label_number(scale_cut = scales::cut_short_scale())(plan$target_inventory)
          }
-         valueBox(
-            value = val_txt,
-            subtitle = "목표 재고 (예상 매출 ÷ 목표 턴)",
-            color = "blue",
-            icon = NULL
+         div(
+            class = "action-kpi-card",
+            div(class = "kpi-label", "목표 재고"),
+            div(class = "kpi-value", val_txt),
+            div(class = "kpi-sub", "예상 매출 ÷ 목표 재고회전율")
          )
       })
 
-      output$action_inventory_gap_box <- renderValueBox({
+      output$action_kpi_gap <- renderUI({
          plan <- action_plan_calc()
          fin_validate(fin_need(!is.null(plan), "데이터를 불러오세요"))
          reduction <- plan$reduction
          if (!is.null(reduction) && is.finite(reduction)) {
             label <- if (reduction > 0) "감축 필요 재고" else "추가 필요 재고"
-            color <- if (reduction > 0) "yellow" else "green"
             val_txt <- scales::label_number(scale_cut = scales::cut_short_scale())(abs(reduction))
          } else {
             label <- "재고 조정"
-            color <- "blue"
             val_txt <- "데이터 필요"
          }
-         valueBox(
-            value = val_txt,
-            subtitle = label,
-            color = color,
-            icon = NULL
+         div(
+            class = "action-kpi-card",
+            div(class = "kpi-label", label),
+            div(class = "kpi-value", val_txt),
+            div(class = "kpi-sub", "현재 재고와 목표 재고의 차이")
          )
       })
 
-      output$action_cash_box <- renderValueBox({
+      output$action_kpi_cash <- renderUI({
          plan <- action_plan_calc()
          fin_validate(fin_need(!is.null(plan), "데이터를 불러오세요"))
          gain <- plan$cash_gain
@@ -12972,18 +13109,11 @@ server <-
          } else {
             paste0(ifelse(gain > 0, "+", ""), scales::label_number(scale_cut = scales::cut_short_scale())(gain))
          }
-         color <- if (is.null(gain) || is.na(gain)) {
-            "blue"
-         } else if (gain > 0) {
-            "green"
-         } else {
-            "red"
-         }
-         valueBox(
-            value = val_txt,
-            subtitle = "예상 현금 흐름 증가액",
-            color = color,
-            icon = NULL
+         div(
+            class = "action-kpi-card",
+            div(class = "kpi-label", "예상 현금 흐름 변화"),
+            div(class = "kpi-value", val_txt),
+            div(class = "kpi-sub", "재고 조정 후 확보/필요 자금")
          )
       })
 
@@ -13746,70 +13876,36 @@ server <-
          showNotification("목표가 적용되었습니다. 리스크/경고 메시지를 다시 계산합니다.", type = "message", duration = 4)
       })
 
-      output$pred_insight_main <- renderValueBox({
+      pred_highlights <- reactive({
          res <- fin_forecast_result()
          fc <- res$forecast %>% arrange(.data$year)
          fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
          latest <- fc %>% slice_tail(n = 1)
-         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
-         color <- if (!is.na(band_ratio) && band_ratio > growth_target()) "red" else "blue"
-         valueBox(
-            value = paste0(round(latest$yhat / 1e8, 1), " 억"),
-            subtitle = paste0(latest$year, "년 예상 매출"),
-            color = color,
-            icon = NULL
-         )
-      })
-
-      output$pred_warning <- renderValueBox({
-         res <- fin_forecast_result()
-         fc <- res$forecast %>% arrange(.data$year)
          hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
-         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
-            (fc$yhat[1] - hist_last$sales) / hist_last$sales
+         current_sales <- if (nrow(hist_last)) hist_last$sales[[1]] else NA_real_
+         growth <- if (!is.na(current_sales) && current_sales != 0) {
+            (latest$yhat[[1]] - current_sales) / current_sales
          } else NA_real_
          band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
          df <- fin_combined_df()
          focus <- pred_focus_source()
-         latest_year <- max(df$year, na.rm = TRUE)
+         latest_year_actual <- max(df$year, na.rm = TRUE)
          inv_turn <- df %>%
-            filter(.data$source == focus, .data$year == latest_year) %>%
+            filter(.data$source == focus, .data$year == latest_year_actual) %>%
             summarize(val = mean(.data$inventory_turnover, na.rm = TRUE), .groups = "drop") %>%
             pull(.data$val)
-         warn <- "안심 수준"
-         color <- "green"
+         warn_label <- "안심 수준"
+         warn_level <- "safe"
          if (!is.na(band_ratio) && band_ratio > growth_target()) {
-            warn <- "밴드 폭 > 목표"
-            color <- "red"
+            warn_label <- "밴드 폭 경고"
+            warn_level <- "danger"
          } else if (!is.na(growth) && growth < -0.05) {
-            warn <- "매출 감소 우려"
-            color <- "yellow"
+            warn_label <- "매출 감소 우려"
+            warn_level <- "warn"
          } else if (!is.na(inv_turn) && inv_turn < turn_target()) {
-            warn <- "재고 턴 목표 미달"
-            color <- "yellow"
+            warn_label <- "재고 턴 주의"
+            warn_level <- "warn"
          }
-         valueBox(
-            value = warn,
-            subtitle = "예측 신호",
-            color = color,
-            icon = NULL
-         )
-      })
-
-      output$pred_action_box <- renderValueBox({
-         res <- fin_forecast_result()
-         fc <- res$forecast %>% arrange(.data$year)
-         hist_last <- res$history %>% arrange(.data$year) %>% slice_tail(n = 1)
-         growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
-            (fc$yhat[1] - hist_last$sales) / hist_last$sales
-         } else NA_real_
-         df <- fin_combined_df()
-         focus <- pred_focus_source()
-         latest_year <- max(df$year, na.rm = TRUE)
-         inv_turn <- df %>%
-            filter(.data$source == focus, .data$year == latest_year) %>%
-            summarize(val = mean(.data$inventory_turnover, na.rm = TRUE), .groups = "drop") %>%
-            pull(.data$val)
          action <- if (!is.na(growth) && growth < -0.05) {
             "재고·비용 축소"
          } else if (!is.na(inv_turn) && inv_turn < turn_target()) {
@@ -13819,27 +13915,91 @@ server <-
          } else {
             "보합: 재고 점검"
          }
-         valueBox(
-            value = action,
-            subtitle = "추천 행동",
-            color = "purple",
-            icon = NULL
+         band_label <- if (is.na(band_ratio)) "데이터 필요" else paste0("±", scales::percent(band_ratio / 2, accuracy = 1))
+         forecast_label <- ifelse(is.finite(latest$yhat[[1]]), paste0(round(latest$yhat[[1]] / 1e8, 1), "억"), "자료 부족")
+         growth_txt <- if (is.na(growth)) "전년 대비 수치는 부족합니다." else paste0("전년 대비 ", scales::percent(growth, accuracy = 0.1), " 수준입니다.")
+         band_sentence <- if (is.na(band_ratio)) "불확실성 정보가 부족합니다." else paste0("예측 불확실성은 ", band_label, " 입니다.")
+         headline <- if (is.na(growth)) {
+            "예측 데이터 확인 필요"
+         } else if (growth > 0.1) {
+            "가파른 성장 전망"
+         } else if (growth < -0.05) {
+            "감소 위험 신호"
+         } else {
+            "완만한 성장 전망"
+         }
+         history_years <- if (!is.null(res$history$year)) range(res$history$year, na.rm = TRUE) else c(NA, NA)
+         meta <- if (all(is.finite(history_years))) {
+            paste0("학습 기간 ", history_years[1], "–", history_years[2], " · 예측 기간 ", length(unique(fc$year)), "년")
+         } else {
+            "학습/예측 기간 정보를 확인하세요."
+         }
+         list(
+            year = latest$year[[1]],
+            forecast_label = forecast_label,
+            warn_label = warn_label,
+            warn_level = warn_level,
+            action_label = action,
+            band_label = band_label,
+            summary_sentence = paste0(latest$year, "년 예상 매출은 약 ", forecast_label, "이며 ", growth_txt, " ", band_sentence),
+            meta_text = meta,
+            headline = headline,
+            growth = growth
          )
       })
 
-      output$pred_interval_box <- renderValueBox({
-         res <- fin_forecast_result()
-         fc <- res$forecast %>% arrange(.data$year)
-         fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
-         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
-         val_txt <- if (is.na(band_ratio)) "데이터 필요" else paste0("±", scales::percent(band_ratio / 2, accuracy = 1))
-         color <- if (!is.na(band_ratio) && band_ratio > growth_target()) "red" else "blue"
-         valueBox(
-            value = val_txt,
-            subtitle = "예측 불확실성(리본)",
-            color = color,
-            icon = NULL
+      output$pred_summary_card <- renderUI({
+         metrics <- pred_highlights()
+         cls <- switch(metrics$warn_level,
+                       danger = "pred-status-pill danger",
+                       warn = "pred-status-pill warn",
+                       safe = "pred-status-pill safe",
+                       "pred-status-pill neutral")
+         div(
+            class = "pred-summary-card",
+            tags$span(class = cls, metrics$warn_label),
+            div(
+               class = "pred-summary-text",
+               tags$h4(metrics$headline),
+               tags$p(metrics$summary_sentence),
+               div(class = "pred-summary-meta", metrics$meta_text)
+            )
          )
+      })
+
+      output$pred_kpi_forecast <- renderUI({
+         metrics <- pred_highlights()
+         div(
+            class = "pred-kpi-card",
+            div(class = "kpi-label", paste0(metrics$year, " 예상 매출")),
+            div(class = "kpi-value", metrics$forecast_label),
+            div(class = "kpi-sub", "전망 기준: Prophet 예측 결과")
+         )
+      })
+
+      output$pred_kpi_signal <- renderUI({
+         metrics <- pred_highlights()
+         div(
+            class = "pred-kpi-card",
+            div(class = "kpi-label", "예측 신호"),
+            div(class = "kpi-value", metrics$warn_label),
+            div(class = "kpi-sub", "회전율 · 성장률 · 밴드 폭 기준")
+         )
+      })
+
+      output$pred_kpi_band <- renderUI({
+         metrics <- pred_highlights()
+         div(
+            class = "pred-kpi-card",
+            div(class = "kpi-label", "예측 불확실성"),
+            div(class = "kpi-value", metrics$band_label),
+            div(class = "kpi-sub", "밴드 폭 / 예상치 대비 비율")
+         )
+      })
+
+      output$pred_action_chip <- renderUI({
+         metrics <- pred_highlights()
+         tags$span(class = "pred-action-chip", metrics$action_label)
       })
 
       output$pred_accuracy <- renderTable({
@@ -13849,14 +14009,18 @@ server <-
          mae <- mean(abs(fitted$resid), na.rm = TRUE)
          mape <- mean(abs(fitted$resid / fitted$actual), na.rm = TRUE)
          last_resid <- fitted %>% arrange(desc(.data$year)) %>% slice_head(n = 1) %>% pull(.data$resid)
+         fmt_amount <- function(val) {
+            if (is.na(val)) return("자료 부족")
+            paste0(scales::number(val / 1e8, accuracy = 0.01), " 억 원")
+         }
+         fmt_accuracy <- function(val) {
+            if (is.na(val)) return("자료 부족")
+            paste0(scales::number((1 - val) * 100, accuracy = 0.1), "%")
+         }
          tibble(
             Metric = c("평균 오차 수량", "정확도 (%)", "최근 연도 잔차"),
-            Value = c(mae / 1e8, mape * 100, last_resid / 1e8)
-         ) %>%
-            mutate(Value = dplyr::case_when(
-               Metric == "정확도 (%)" ~ paste0(round(as.numeric(Value), 1), "%"),
-               TRUE ~ paste0(scales::comma(as.numeric(Value), accuracy = 0.1), " 억 원")
-            ))
+            Value = c(fmt_amount(mae), fmt_accuracy(mape), fmt_amount(last_resid))
+         )
       })
 
       pred_summary_text <- reactive({
