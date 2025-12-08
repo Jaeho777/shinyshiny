@@ -12624,6 +12624,63 @@ server <-
          )
       })
 
+      output$diag_status_copy <- renderUI({
+         res <- values$diagnosis_res
+         if (is.null(res)) {
+            return(HTML("<b>데이터를 업로드하면 진단 결과를 요약합니다.</b>"))
+         }
+         detail <- paste0(
+            "기준 연도: ", res$latest_year,
+            " · 업종 평균 턴 ", sprintf("%.1f", res$avg_turnover),
+            " / 이익률 ", scales::percent(res$avg_margin, accuracy = 0.1)
+         )
+         HTML(paste0(
+            "<h3 style='text-align:center; font-weight:700;'>", res$message, "</h3>",
+            "<div style='text-align:center; color:#666; margin-top:6px;'>", detail, "</div>"
+         ))
+      })
+
+      output$diag_quadrant_label <- renderUI({
+         res <- values$diagnosis_res
+         fin_validate(fin_need(!is.null(res), "데이터를 불러오세요"))
+         cls <- if (identical(res$quadrant, "Dog")) "diag-badge red" else "diag-badge green"
+         label_txt <- if (identical(res$quadrant, "Dog")) "위험 구간 (과재고)" else "건강 구간 (효율)"
+         sub_txt <- if (identical(res$quadrant, "Dog")) "재고가 돈을 잠식" else "재고·이익 양호"
+         HTML(sprintf(
+            "<div class='%s'><div class='diag-badge-title'>%s</div><div class='diag-badge-sub'>%s</div></div>",
+            cls, label_txt, sub_txt
+         ))
+      })
+
+      output$diag_metrics <- renderUI({
+         res <- values$diagnosis_res
+         fin_validate(fin_need(!is.null(res), "데이터를 불러오세요"))
+         turn_txt <- if (is.na(res$user_turnover)) "N/A" else sprintf("%.1f", res$user_turnover)
+         turn_avg_txt <- if (is.na(res$avg_turnover)) "N/A" else sprintf("%.1f", res$avg_turnover)
+         margin_txt <- ifelse(is.na(res$user_margin), "N/A", scales::percent(res$user_margin, accuracy = 0.1))
+         margin_avg_txt <- scales::percent(res$avg_margin, accuracy = 0.1)
+         msg_turn <- if (is.na(res$user_turnover)) {
+            "재고 회전율 계산 불가"
+         } else if (res$user_turnover < res$avg_turnover) {
+            "재고 회전이 느립니다. 할인 판매를 고려하세요."
+         } else {
+            "재고 회전이 업종 평균 이상입니다."
+         }
+         msg_margin <- if (is.na(res$user_margin)) {
+            "이익률 계산 불가"
+         } else if (res$user_margin < res$avg_margin) {
+            "이익률이 업종 평균보다 낮습니다. 마진 회복 액션이 필요합니다."
+         } else {
+            "이익률이 업종 평균 이상입니다."
+         }
+         HTML(paste0(
+            "<div class='diag-metrics'>",
+            "<div class='diag-metric'><div class='label'>재고 턴</div><div class='value'>", turn_txt, "회</div><div class='hint'>(업종 평균 ", turn_avg_txt, ")</div><div class='note'>", msg_turn, "</div></div>",
+            "<div class='diag-metric'><div class='label'>이익률</div><div class='value'>", margin_txt, "</div><div class='hint'>(업종 평균 ", margin_avg_txt, ")</div><div class='note'>", msg_margin, "</div></div>",
+            "</div>"
+         ))
+      })
+
       ## Detail tab outputs (teammate work)
       output$detail_plot_1 <- renderPlotly({
          df <- fin_combined_df()

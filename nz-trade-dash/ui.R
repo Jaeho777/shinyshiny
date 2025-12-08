@@ -454,6 +454,11 @@ body <- dashboardBody(
         )
       ),
       fluidRow(
+        valueBoxOutput("fin_kpi_sales", width = 4),
+        valueBoxOutput("fin_kpi_it", width = 4),
+        valueBoxOutput("fin_kpi_roa", width = 4)
+      ),
+      fluidRow(
         box(
           title = tagList("앞으로 흐름(연도별)", tags$span(class = "pred-meta-note", "기준 : 매출 / 단위 : 억 원")),
           width = 8,
@@ -559,6 +564,16 @@ body <- dashboardBody(
           class = "action-summary-box",
           uiOutput("action_summary_card")
         )
+      )
+    ),
+
+    tabItem(
+      tabName = "tab_action",
+      h3("Step 4. Action: 발주/액션 플랜"),
+      fluidRow(
+        valueBoxOutput("action_target_box"),
+        valueBoxOutput("action_inventory_gap_box"),
+        valueBoxOutput("action_cash_box")
       ),
       fluidRow(
         column(width = 4, uiOutput("action_kpi_target")),
