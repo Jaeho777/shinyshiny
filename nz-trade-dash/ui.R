@@ -104,49 +104,47 @@ body <- dashboardBody(
     tabItem(
       tabName = "tab_data",
       fluidRow(
-        box(
-          width = 12,
-          title = NULL,
-          solidHeader = FALSE,
-          status = NULL,
-          class = "hero-panel",
-          div(
-            class = "hero-content",
-            div(
-              class = "hero-copy",
-              h1("데이터 업로드하고 재고 예측 시작하기"),
-              p("3단계로 내 쇼핑몰 데이터를 올리고, 진단/예측까지 한 번에 진행해요."),
-              actionButton("cta_upload", "데이터 업로드 시작하기", class = "btn btn-primary btn-lg hero-cta"),
-              p(class = "hero-alt", "또는 상장사 / 데모 데이터로 체험해볼 수 있어요.")
-            ),
-            div(
-              class = "hero-feature-cards",
-              div(class = "hero-feature-card",
-                  tags$span(class = "feature-label", "Why"),
-                  strong("재고 vs. 현금 흐름"),
-                  p("재고가 현금흐름에 미치는 영향을 한 줄로 요약해 드려요.")
-              ),
-              div(class = "hero-feature-card",
-                  tags$span(class = "feature-label", "Diagnosis"),
-                  strong("내 가게 상태 진단"),
-                  p("과재고인지 기회손실인지 1분 안에 파악할 수 있어요.")
-              ),
-              div(class = "hero-feature-card",
-                  tags$span(class = "feature-label", "Prediction"),
-                  strong("예측 & 액션"),
-                  p("다음 달 수요를 예측하고 발주 가이드를 제안해요.")
-              )
-            )
-          )
-        )
-      ),
-      fluidRow(
         column(
           width = 9,
           box(
             width = 12,
+            title = NULL,
+            solidHeader = FALSE,
+            status = NULL,
+            class = "hero-panel",
+            div(
+              class = "hero-content",
+              div(
+                class = "hero-copy",
+                h1("데이터 업로드하고 재고 예측 시작하기"),
+                p("3단계로 내 쇼핑몰 데이터를 올리고, 진단/예측까지 한 번에 진행"),
+                actionButton("cta_upload", "데이터 업로드 시작하기", class = "btn btn-primary btn-lg hero-cta"),
+                p(class = "hero-alt", "또는 상장사 / 데모 데이터로 체험해볼 수 있어요.")
+              ),
+              div(
+                class = "hero-feature-cards",
+                div(class = "hero-feature-card",
+                    tags$span(class = "feature-label", "Why"),
+                    strong("재고 vs. 현금 흐름"),
+                    p("재고가 현금흐름에 미치는 영향을 한 줄로 요약해 드려요.")
+                ),
+                div(class = "hero-feature-card",
+                    tags$span(class = "feature-label", "Diagnosis"),
+                    strong("내 가게 상태 진단"),
+                    p("과재고인지 기회손실인지 1분 안에 파악할 수 있어요.")
+                ),
+                div(class = "hero-feature-card",
+                    tags$span(class = "feature-label", "Prediction"),
+                    strong("예측 & 액션"),
+                    p("다음 달 수요를 예측하고 발주 가이드를 제안해요.")
+                )
+              )
+            )
+          ),
+          box(
+            width = 12,
             title = tagList(
-              tags$span(class = "step-label", "Step 1"),
+              tags$span(class = "step-label", HTML("Step<br>1")),
               tags$span(class = "step-title-text", "데이터 소스 선택")
             ),
             solidHeader = TRUE,
@@ -210,7 +208,7 @@ body <- dashboardBody(
           box(
             width = 12,
             title = tagList(
-              tags$span(class = "step-label", "Step 2"),
+              tags$span(class = "step-label", HTML("Step<br>2")),
               tags$span(class = "step-title-text", "기본 옵션 설정")
             ),
             solidHeader = TRUE,
@@ -237,7 +235,7 @@ body <- dashboardBody(
           box(
             width = 12,
             title = tagList(
-              tags$span(class = "step-label", "Step 3"),
+              tags$span(class = "step-label", HTML("Step<br>3")),
               tags$span(class = "step-title-text", "업로드 & Pre-Check 결과")
             ),
             solidHeader = TRUE,
