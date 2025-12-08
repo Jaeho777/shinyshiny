@@ -571,12 +571,7 @@ body <- dashboardBody(
           class = "action-summary-box",
           uiOutput("action_summary_card")
         )
-      )
-    ),
-
-    tabItem(
-      tabName = "tab_action",
-      h3("Step 4. Action: 발주/액션 플랜"),
+      ),
       fluidRow(
         valueBoxOutput("action_target_box"),
         valueBoxOutput("action_inventory_gap_box"),
