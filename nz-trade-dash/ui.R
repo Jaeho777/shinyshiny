@@ -428,6 +428,15 @@ body <- dashboardBody(
         )
       ),
       fluidRow(
+        box(
+          width = 12,
+          title = "예측 기준 데이터",
+          solidHeader = TRUE,
+          class = "pred-main-box pred-source-box",
+          uiOutput("pred_source_ui")
+        )
+      ),
+      fluidRow(
         column(width = 4, uiOutput("pred_kpi_forecast")),
         column(width = 4, uiOutput("pred_kpi_signal")),
         column(width = 4, uiOutput("pred_kpi_band"))
