@@ -353,7 +353,6 @@ fin_pick_source <- function(df_all) {
 }
 
 fin_safe_prophet <- function(df, horizon, source_name = NULL) {
-   req(nrow(df) > 2)
    horizon <- max(1L, as.integer(horizon))
    src <- if (!is.null(source_name)) {
       source_name
@@ -362,16 +361,19 @@ fin_safe_prophet <- function(df, horizon, source_name = NULL) {
    } else {
       "Series"
    }
-   df <- df %>% arrange(.data$year)
-   m <- prophet(df %>% transmute(ds = as.Date(paste0(.data$year, "-12-31")), y = .data$sales))
+   clean <- df %>%
+      filter(is.finite(.data$year), is.finite(.data$sales), .data$sales != 0) %>%
+      arrange(.data$year)
+   if (nrow(clean) < 3) stop("예측을 위해 매출이 채워진 3개 연도 이상이 필요합니다.")
+   m <- prophet(clean %>% transmute(ds = as.Date(paste0(.data$year, "-12-31")), y = .data$sales))
    future <- make_future_dataframe(m, periods = horizon, freq = "year")
    preds <- predict(m, future) %>% mutate(year = as.integer(format(.data$ds, "%Y")))
-   last_year <- max(df$year, na.rm = TRUE)
+   last_year <- max(clean$year, na.rm = TRUE)
    forecast <- preds %>% filter(.data$year > last_year)
    fitted <- preds %>%
       filter(.data$year <= last_year) %>%
       select(.data$year, .data$yhat, .data$yhat_lower, .data$yhat_upper) %>%
-      left_join(df %>% select(.data$year, sales), by = "year") %>%
+      left_join(clean %>% select(.data$year, sales), by = "year") %>%
       rename(actual = .data$sales) %>%
       mutate(resid = .data$actual - .data$yhat)
    list(
@@ -380,9 +382,36 @@ fin_safe_prophet <- function(df, horizon, source_name = NULL) {
       forecast = forecast %>% select(.data$year, .data$yhat, .data$yhat_lower, .data$yhat_upper, .data$trend),
       fitted = fitted,
       full = preds %>% select(.data$year, .data$ds, .data$yhat, .data$yhat_lower, .data$yhat_upper, .data$trend),
-      history = df,
+      history = clean,
       horizon = horizon
    )
+}
+
+calc_band_ratio <- function(fc_tbl, fitted_tbl = NULL) {
+   if (is.null(fc_tbl) || nrow(fc_tbl) == 0) return(NA_real_)
+   width <- fc_tbl$yhat_upper - fc_tbl$yhat_lower
+   mask <- is.finite(width) & is.finite(fc_tbl$yhat) & fc_tbl$yhat != 0
+   interval_ratio <- if (any(mask)) median(width[mask] / abs(fc_tbl$yhat[mask]), na.rm = TRUE) else NA_real_
+
+   resid_ratio <- NA_real_
+   hist_n <- NA_integer_
+   if (!is.null(fitted_tbl)) {
+      resid_mask <- is.finite(fitted_tbl$resid) & is.finite(fitted_tbl$actual) & fitted_tbl$actual != 0
+      if (any(resid_mask)) {
+         resid_ratio <- median(abs(fitted_tbl$resid[resid_mask] / fitted_tbl$actual[resid_mask]), na.rm = TRUE)
+      }
+      hist_n <- sum(is.finite(fitted_tbl$actual))
+   }
+
+   candidates <- c(interval_ratio, resid_ratio)
+   candidates <- candidates[is.finite(candidates) & candidates > 0]
+   ratio <- if (length(candidates)) max(candidates) else NA_real_
+   if (is.finite(hist_n) && hist_n > 0 && hist_n < 6) {
+      # Avoid zero-width bands when the training sample is very short
+      ratio <- max(ratio, 0.05, na.rm = TRUE)
+   }
+   if (is.finite(ratio) && ratio > 0) return(min(ratio, 0.8))
+   NA_real_
 }
 
 ## 000 user input setup. Please pay close attention and change -----
@@ -11886,9 +11915,10 @@ server <-
          read_csv(path, show_col_types = FALSE) %>% clean_names()
       }
 
-      fin_guess_col <- function(cols, patterns) {
+      fin_guess_col <- function(cols, patterns, optional = FALSE) {
          hit <- which(str_detect(cols, regex(paste(patterns, collapse = "|"), ignore_case = TRUE)))[1]
-         if (length(hit) && !is.na(hit)) cols[[hit]] else cols[[1]]
+         if (length(hit) && !is.na(hit)) return(cols[[hit]])
+         if (optional) "" else cols[[1]]
       }
       fin_validate_upload_df <- function(df) {
          if (is.null(df) || !nrow(df)) stop("업로드한 파일이 비어 있습니다.")
@@ -12078,9 +12108,9 @@ server <-
          year_col <- fin_guess_col(cols, c("yeondo", "year", "년도"))
          sales_col <- fin_guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"))
          inv_col <- fin_guess_col(cols, c("jaego", "inv", "inventory", "재고"))
-         net_col <- fin_guess_col(cols, c("dang_gisun_iig", "net_income", "income", "순이익"))
-         asset_col <- fin_guess_col(cols, c("total_assets", "assets", "자산", "maechul_wonga_cogs"))
-         cogs_col <- fin_guess_col(cols, c("cogs", "wonga", "매출원가", "maechul_wonga_cogs"))
+         net_col <- fin_guess_col(cols, c("dang_gisun_iig", "net_income", "income", "순이익"), optional = TRUE)
+         asset_col <- fin_guess_col(cols, c("total_assets", "assets", "자산", "maechul_wonga_cogs"), optional = TRUE)
+         cogs_col <- fin_guess_col(cols, c("cogs", "wonga", "매출원가", "maechul_wonga_cogs"), optional = TRUE)
          output$fin_mapping_ui <- renderUI({
             tagList(
                selectInput("fin_col_year", "연도 컬럼", choices = cols, selected = year_col),
@@ -12140,9 +12170,37 @@ server <-
                   is.finite(.data$sales) & is.finite(.data$inventory) & .data$inventory != 0 ~ .data$sales / .data$inventory,
                   TRUE ~ NA_real_
                ),
-               roa = if_else(!is.na(.data$net_income) & !is.na(.data$total_assets) & .data$total_assets != 0, .data$net_income / .data$total_assets, NA_real_)
-           )
-     })
+	               roa = if_else(!is.na(.data$net_income) & !is.na(.data$total_assets) & .data$total_assets != 0, .data$net_income / .data$total_assets, NA_real_)
+	           )
+	    })
+
+      pred_source_choices <- reactive({
+         df <- fin_combined_df()
+         if (is.null(df) || nrow(df) == 0) return(character())
+         sort(unique(df$source))
+      })
+
+      pred_source_selected <- reactive({
+         df <- fin_combined_df()
+         choices <- pred_source_choices()
+         if (length(choices) == 0) return(NULL)
+         if (!is.null(input$pred_source) && input$pred_source %in% choices) return(input$pred_source)
+         fin_pick_source(df)
+      })
+
+      output$pred_source_ui <- renderUI({
+         choices <- pred_source_choices()
+         if (length(choices) == 0) {
+            return(tags$div(class = "assist-text", "데이터를 불러오면 예측 기준을 선택할 수 있습니다."))
+         }
+         default <- pred_source_selected()
+         selectInput(
+            "pred_source",
+            "예측 기준을 선택하세요",
+            choices = choices,
+            selected = default
+         )
+      })
 
       observeEvent(fin_combined_df(), {
          df_all <- fin_combined_df()
@@ -12283,22 +12341,26 @@ server <-
          div(class = "assist-text", strong(msg))
       })
 
-      observeEvent(fin_combined_df(), {
+      observeEvent(list(fin_combined_df(), input$pred_source), {
          df_all <- fin_combined_df()
          if (is.null(df_all) || nrow(df_all) < 3) return()
-         chosen_source <- fin_pick_source(df_all)
+         chosen_source <- pred_source_selected()
          if (is.null(chosen_source)) return()
          df <- df_all %>% filter(.data$source == chosen_source)
          if (nrow(df) < 3) return()
-         if (is.null(fin_values$fc_result)) {
-            horizon <- if (!is.null(input$fin_forecast_y)) {
-               max(1L, min(5L, as.integer(input$fin_forecast_y)))
-            } else {
-               3L
-            }
-            fin_values$fc_result <- fin_safe_prophet(df, horizon, source_name = chosen_source)
+         horizon <- if (!is.null(input$fin_forecast_y)) {
+            max(1L, min(5L, as.integer(input$fin_forecast_y)))
+         } else {
+            3L
          }
-         values$forecast_res <- fin_values$fc_result
+         tryCatch({
+            fin_values$fc_result <- fin_safe_prophet(df, horizon, source_name = chosen_source)
+            values$forecast_res <- fin_values$fc_result
+         }, error = function(e) {
+            fin_values$fc_result <- NULL
+            values$forecast_res <- NULL
+            showNotification(paste("예측 자동 실행 실패:", conditionMessage(e)), type = "error", duration = 6)
+         })
       })
 
       fin_forecast_result <- reactive({
@@ -12313,7 +12375,7 @@ server <-
 
       pred_focus_source <- reactive({
          res <- fin_forecast_result()
-         if (!is.null(res$source)) res$source else "선택된 소스"
+         if (!is.null(res$source)) res$source else if (!is.null(pred_source_selected())) pred_source_selected() else "선택된 소스"
       })
 
       output$fin_kpi_row <- renderUI({
@@ -12483,7 +12545,8 @@ server <-
       observeEvent(input$fin_do_forecast, {
          df_all <- fin_combined_df()
          fin_validate(fin_need(nrow(df_all) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
-         chosen_source <- fin_pick_source(df_all)
+         chosen_source <- pred_source_selected()
+         fin_validate(fin_need(!is.null(chosen_source), "예측할 소스를 선택하세요."))
          df <- df_all %>% filter(.data$source == chosen_source)
          fin_validate(fin_need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
          last_year <- max(df$year, na.rm = TRUE)
@@ -12492,9 +12555,16 @@ server <-
             showNotification("최근 연도가 2030 이상이라 예측이 없습니다.", type = "warning", duration = 5)
             return()
          }
-         fin_values$fc_result <- fin_safe_prophet(df, horizon, source_name = chosen_source)
-         update_step_status(3, TRUE)
-         showNotification("예측이 업데이트되었습니다.", type = "message", duration = 4)
+         tryCatch({
+            fin_values$fc_result <- fin_safe_prophet(df, horizon, source_name = chosen_source)
+            update_step_status(3, TRUE)
+            values$forecast_res <- fin_values$fc_result
+            showNotification("예측이 업데이트되었습니다.", type = "message", duration = 4)
+         }, error = function(e) {
+            fin_values$fc_result <- NULL
+            values$forecast_res <- NULL
+            showNotification(paste("예측 실행 실패:", conditionMessage(e)), type = "error", duration = 6)
+         })
       })
 
       ## Additional KPI boxes for teammate tabs
@@ -13177,7 +13247,6 @@ server <-
       analysis_quality_checks <- reactive({
          df <- fin_combined_df()
          msgs <- c()
-         if (nrow(df) < 3) msgs <- c(msgs, "연도별 데이터가 3개 미만이라 추세 읽기가 어려워요. 최근 3년 이상을 넣어주세요.")
          num_missing <- sum(!is.finite(df$sales)) + sum(!is.finite(df$inventory))
          if (num_missing > 0) msgs <- c(msgs, "매출/재고에 빈칸이 있어요. 업로드 파일을 다시 확인해주세요.")
          zero_years <- df %>% filter(.data$sales <= 0 | .data$inventory <= 0) %>% pull(.data$year) %>% unique()
@@ -13623,7 +13692,7 @@ server <-
 
       output$pred_comp_note <- renderText({
          src <- pred_focus_source()
-         paste0("트렌드/컴포넌트는 '", src, "' 예측 기준입니다. (My Company 데이터가 있으면 우선 사용)")
+         paste0("트렌드/컴포넌트는 '", src, "' 예측 기준입니다. (상단에서 소스를 변경할 수 있습니다)")
       })
 
       output$pred_fc_error_plot <- renderPlotly({
@@ -13820,7 +13889,7 @@ server <-
          }
          direction_msg <- paste0("전체 추세는 ", direction, "입니다.")
 
-         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         band_ratio <- calc_band_ratio(fc, res$fitted)
          band_msg <- if (!is.na(band_ratio)) {
             if (band_ratio > 0.4) {
                paste0("예측 폭이 넓어요(폭 약 ", scales::percent(band_ratio, accuracy = 1), "). 보수적 발주를 추천.")
@@ -13845,7 +13914,7 @@ server <-
          growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
             (fc$yhat[1] - hist_last$sales) / hist_last$sales
          } else NA_real_
-         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         band_ratio <- calc_band_ratio(fc, res$fitted)
          headline <- if (!is.na(growth) && growth < -0.05) {
             "매출이 줄 가능성이 있어요."
          } else if (!is.na(growth) && growth > 0.1) {
@@ -13886,7 +13955,7 @@ server <-
          growth <- if (!is.na(current_sales) && current_sales != 0) {
             (latest$yhat[[1]] - current_sales) / current_sales
          } else NA_real_
-         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         band_ratio <- calc_band_ratio(fc, res$fitted)
          df <- fin_combined_df()
          focus <- pred_focus_source()
          latest_year_actual <- max(df$year, na.rm = TRUE)
@@ -13915,7 +13984,7 @@ server <-
          } else {
             "보합: 재고 점검"
          }
-         band_label <- if (is.na(band_ratio)) "데이터 필요" else paste0("±", scales::percent(band_ratio / 2, accuracy = 1))
+         band_label <- if (is.na(band_ratio)) "데이터 필요" else paste0("±", scales::percent(band_ratio / 2, accuracy = 0.1))
          forecast_label <- ifelse(is.finite(latest$yhat[[1]]), paste0(round(latest$yhat[[1]] / 1e8, 1), "억"), "자료 부족")
          growth_txt <- if (is.na(growth)) "전년 대비 수치는 부족합니다." else paste0("전년 대비 ", scales::percent(growth, accuracy = 0.1), " 수준입니다.")
          band_sentence <- if (is.na(band_ratio)) "불확실성 정보가 부족합니다." else paste0("예측 불확실성은 ", band_label, " 입니다.")
@@ -14055,9 +14124,9 @@ server <-
          res <- fin_forecast_result()
          fc <- res$forecast %>% arrange(.data$year)
          fin_validate(fin_need(nrow(fc) > 0, "예측 결과가 없습니다."))
-         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         band_ratio <- calc_band_ratio(fc, res$fitted)
          if (is.na(band_ratio)) return("리본 폭을 계산할 수 없어 불확실성 안내가 제한됩니다.")
-         paste0("평균 리본 폭 ", scales::percent(band_ratio, accuracy = 1), ". 이 구간을 벗어나면 이상 징후로 간주하세요.")
+         paste0("평균 리본 폭 ", scales::percent(band_ratio, accuracy = 0.1), ". 이 구간을 벗어나면 이상 징후로 간주하세요.")
       })
 
       pred_detail_2_text <- reactive({
@@ -14085,7 +14154,7 @@ server <-
          growth <- if (!is.null(hist_last$sales) && !is.na(hist_last$sales) && hist_last$sales != 0) {
             (fc$yhat[1] - hist_last$sales) / hist_last$sales
          } else NA_real_
-         band_ratio <- median((fc$yhat_upper - fc$yhat_lower) / fc$yhat, na.rm = TRUE)
+         band_ratio <- calc_band_ratio(fc, res$fitted)
          df <- fin_combined_df()
          focus <- pred_focus_source()
          latest_year <- max(df$year, na.rm = TRUE)
@@ -14113,9 +14182,9 @@ server <-
             type = "indicator",
             mode = "gauge+number",
             value = ratio,
-            number = list(valueformat = ".0%"),
+            number = list(valueformat = ".1%"),
             gauge = list(
-               axis = list(range = list(0, range_max), tickformat = ".0%"),
+               axis = list(range = list(0, range_max), tickformat = ".1%"),
                steps = list(
                   list(range = c(0, min(0.2, range_max)), color = "#b7e4c7"),
                   list(range = c(min(0.2, range_max), min(0.4, range_max)), color = "#f9e79f"),
@@ -14187,17 +14256,27 @@ server <-
          res <- fin_forecast_result()
          fitted <- res$fitted
          fin_validate(fin_need(nrow(fitted) > 0, "정확도 계산을 위한 학습 데이터가 부족합니다."))
-         mae <- mean(abs(fitted$resid), na.rm = TRUE)
-         mape <- mean(abs(fitted$resid / fitted$actual), na.rm = TRUE)
-         last_resid <- fitted %>% arrange(desc(.data$year)) %>% slice_head(n = 1) %>% pull(.data$resid)
-         list(mae = mae, mape = mape, last_resid = last_resid)
+         clean <- fitted %>%
+            filter(is.finite(.data$actual), is.finite(.data$resid), .data$actual != 0)
+         sample_n <- nrow(clean)
+         mae <- if (sample_n) mean(abs(clean$resid), na.rm = TRUE) else NA_real_
+         mape <- if (sample_n) mean(abs(clean$resid / clean$actual), na.rm = TRUE) else NA_real_
+         acc_pct <- if (sample_n >= 3 && is.finite(mape)) max(0, (1 - mape) * 100) else NA_real_
+         last_resid <- fitted %>%
+            filter(is.finite(.data$resid)) %>%
+            arrange(desc(.data$year)) %>%
+            slice_head(n = 1) %>%
+            pull(.data$resid)
+         if (!length(last_resid)) last_resid <- NA_real_
+         list(mae = mae, mape = mape, accuracy_pct = acc_pct, last_resid = last_resid, sample_n = sample_n)
       })
 
       output$pred_accuracy_plot <- renderPlotly({
          metrics <- pred_accuracy_metrics()
+         if (is.na(metrics$sample_n) || metrics$sample_n == 0) return(plotly_empty())
          accuracy_df <- tibble(
             metric = c("평균 오차 수량(억)", "최근 잔차(억)", "정확도 (%)"),
-            value = c(metrics$mae / 1e8, metrics$last_resid / 1e8, metrics$mape * 100),
+            value = c(metrics$mae / 1e8, metrics$last_resid / 1e8, metrics$accuracy_pct),
             unit = c("억", "억", "%")
          )
          plot_ly(
@@ -14205,7 +14284,9 @@ server <-
             x = ~metric,
             y = ~value,
             type = "bar",
-            text = ~ifelse(unit == "%", paste0(round(value, 1), "%"), paste0(round(value, 1), " 억")),
+            text = ~ifelse(unit == "%",
+                           paste0(round(value, 1), "%"),
+                           paste0(scales::number(value, accuracy = 0.01), " 억")),
             textposition = "auto",
             hovertemplate = "%{x}: %{text}<extra></extra>",
             marker = list(color = c("#5dade2", "#48c9b0", "#f7dc6f"))
@@ -14218,13 +14299,23 @@ server <-
 
       output$pred_accuracy_note <- renderText({
          metrics <- pred_accuracy_metrics()
+         if (metrics$sample_n < 3 || !is.finite(metrics$sample_n)) {
+            return("학습 표본이 3건 미만이라 정확도/오차 지표의 신뢰도가 낮습니다.")
+         }
          fmt_num <- function(v, unit) {
-            if (unit == "%") paste0(round(v, 1), "%") else paste0(round(v / 1e8, 1), " 억 원")
+            if (!is.finite(v)) return("자료 부족")
+            if (unit == "%") {
+               paste0(round(v, 1), "%")
+            } else {
+               scaled <- v / 1e8
+               acc <- if (abs(scaled) < 1) 0.01 else 0.1
+               paste0(scales::number(scaled, accuracy = acc), " 억 원")
+            }
          }
          mae_txt <- fmt_num(metrics$mae, "억")
-         mape_txt <- fmt_num(metrics$mape * 100, "%")
+         acc_txt <- fmt_num(metrics$accuracy_pct, "%")
          resid_txt <- fmt_num(metrics$last_resid, "억")
-         paste0("평균 오차 수량 ", mae_txt, ", 최근 잔차 ", resid_txt, ", 정확도 ", mape_txt, " 입니다.")
+         paste0("평균 오차 수량 ", mae_txt, ", 최근 잔차 ", resid_txt, ", 정확도 ", acc_txt, " (표본 ", metrics$sample_n, "년)입니다.")
       })
       pred_sku_summary <- reactive({ NULL })
       pred_channel_summary <- reactive({ NULL })
@@ -14273,7 +14364,7 @@ server <-
             if (!is.null(fc) && !is.null(fc$forecast)) {
                fc_tbl <- fc$forecast %>% arrange(.data$year)
                first_fc <- fc_tbl %>% slice_head(n = 1)
-               band_ratio <- median((fc_tbl$yhat_upper - fc_tbl$yhat) / fc_tbl$yhat, na.rm = TRUE)
+         band_ratio <- calc_band_ratio(fc_tbl, res$fitted)
                lines <- c(
                   paste0("예상 매출(", first_fc$year, "): ", scales::label_number(scale_cut = scales::cut_short_scale())(first_fc$yhat)),
                   paste0("불확실성 폭: ", ifelse(is.na(band_ratio), "-", scales::percent(band_ratio, accuracy = 0.1)))
