@@ -361,29 +361,109 @@ fin_safe_prophet <- function(df, horizon, source_name = NULL) {
    } else {
       "Series"
    }
-   clean <- df %>%
-      filter(is.finite(.data$year), is.finite(.data$sales), .data$sales != 0) %>%
-      arrange(.data$year)
+   pick_col <- function(cols, patterns) {
+      hit <- which(str_detect(cols, regex(paste(patterns, collapse = "|"), ignore_case = TRUE)))[1]
+      if (length(hit) && !is.na(hit)) cols[[hit]] else NULL
+   }
+   date_col <- NULL
+   if ("ds" %in% names(df)) {
+      date_col <- df$ds
+   } else {
+      alt_col <- pick_col(names(df), c("^date$", "날짜", "연도", "year"))
+      if (!is.null(alt_col)) date_col <- df[[alt_col]]
+   }
+   year_col <- if ("year" %in% names(df)) df$year else NULL
+   ds_vals <- NULL
+   data_type <- "yearly"
+   if (!is.null(date_col)) {
+      first_val <- tryCatch(as.character(stats::na.omit(date_col)[1]), error = function(e) NA_character_)
+      if (inherits(date_col, c("Date", "POSIXt")) || (is.character(first_val) && nchar(first_val) > 4)) {
+         ds_vals <- suppressWarnings(as.Date(as.character(date_col)))
+         if (all(is.na(ds_vals))) ds_vals <- suppressWarnings(as.Date(date_col))
+         data_type <- "monthly"
+      } else {
+         ds_vals <- as.Date(paste0(date_col, "-12-31"))
+      }
+   } else if (!is.null(year_col)) {
+      ds_vals <- as.Date(paste0(year_col, "-12-31"))
+   }
+   sales_col <- NULL
+   if ("y" %in% names(df)) {
+      sales_col <- df$y
+   } else if ("sales" %in% names(df)) {
+      sales_col <- df$sales
+   } else {
+      alt_sales <- pick_col(names(df), c("sale", "sales", "revenue", "매출"))
+      if (!is.null(alt_sales)) sales_col <- df[[alt_sales]]
+   }
+   if (is.null(sales_col)) stop("매출/판매 컬럼을 찾을 수 없습니다.")
+   sales_num <- suppressWarnings(as.numeric(gsub(",", "", as.character(sales_col))))
+   clean <- tibble(
+      ds = if (is.null(ds_vals)) as.Date(character()) else ds_vals,
+      y = sales_num
+   ) %>%
+      filter(!is.na(.data$ds), is.finite(.data$y), .data$y != 0) %>%
+      arrange(.data$ds) %>%
+      mutate(year = as.integer(format(.data$ds, "%Y")))
    if (nrow(clean) < 3) stop("예측을 위해 매출이 채워진 3개 연도 이상이 필요합니다.")
-   m <- prophet(clean %>% transmute(ds = as.Date(paste0(.data$year, "-12-31")), y = .data$sales))
-   future <- make_future_dataframe(m, periods = horizon, freq = "year")
-   preds <- predict(m, future) %>% mutate(year = as.integer(format(.data$ds, "%Y")))
-   last_year <- max(clean$year, na.rm = TRUE)
-   forecast <- preds %>% filter(.data$year > last_year)
+   m <- prophet(
+      clean %>% transmute(ds = .data$ds, y = .data$y),
+      seasonality.mode = if (data_type == "monthly") "multiplicative" else "additive",
+      yearly.seasonality = data_type == "monthly",
+      weekly.seasonality = FALSE,
+      daily.seasonality = FALSE
+   )
+   periods <- if (data_type == "monthly") max(24L, horizon * 12L) else max(5L, horizon)
+   periods <- as.integer(periods)
+   future <- make_future_dataframe(m, periods = periods, freq = if (data_type == "monthly") "month" else "year")
+   preds <- predict(m, future) %>%
+      mutate(year = as.integer(format(.data$ds, "%Y")))
+   last_ds <- max(clean$ds, na.rm = TRUE)
+   hist_yearly <- clean %>%
+      group_by(.data$year) %>%
+      summarize(sales = sum(.data$y, na.rm = TRUE), .groups = "drop")
    fitted <- preds %>%
-      filter(.data$year <= last_year) %>%
-      select(.data$year, .data$yhat, .data$yhat_lower, .data$yhat_upper) %>%
-      left_join(clean %>% select(.data$year, sales), by = "year") %>%
+      filter(.data$ds <= last_ds) %>%
+      group_by(.data$year) %>%
+      summarize(
+         yhat = sum(.data$yhat, na.rm = TRUE),
+         yhat_lower = sum(.data$yhat_lower, na.rm = TRUE),
+         yhat_upper = sum(.data$yhat_upper, na.rm = TRUE),
+         trend = sum(.data$trend, na.rm = TRUE),
+         .groups = "drop"
+      ) %>%
+      left_join(hist_yearly, by = "year") %>%
       rename(actual = .data$sales) %>%
       mutate(resid = .data$actual - .data$yhat)
+   forecast <- preds %>%
+      filter(.data$ds > last_ds) %>%
+      group_by(.data$year) %>%
+      summarize(
+         yhat = sum(.data$yhat, na.rm = TRUE),
+         yhat_lower = sum(.data$yhat_lower, na.rm = TRUE),
+         yhat_upper = sum(.data$yhat_upper, na.rm = TRUE),
+         trend = sum(.data$trend, na.rm = TRUE),
+         .groups = "drop"
+      )
+   full <- preds %>%
+      group_by(.data$year) %>%
+      summarize(
+         ds = max(.data$ds, na.rm = TRUE),
+         yhat = sum(.data$yhat, na.rm = TRUE),
+         yhat_lower = sum(.data$yhat_lower, na.rm = TRUE),
+         yhat_upper = sum(.data$yhat_upper, na.rm = TRUE),
+         trend = sum(.data$trend, na.rm = TRUE),
+         .groups = "drop"
+      )
    list(
       source = src,
       model = m,
       forecast = forecast %>% select(.data$year, .data$yhat, .data$yhat_lower, .data$yhat_upper, .data$trend),
       fitted = fitted,
-      full = preds %>% select(.data$year, .data$ds, .data$yhat, .data$yhat_lower, .data$yhat_upper, .data$trend),
-      history = clean,
-      horizon = horizon
+      full = full,
+      history = hist_yearly,
+      horizon = if (data_type == "monthly") ceiling(periods / 12) else periods,
+      data_type = data_type
    )
 }
 
@@ -11775,6 +11855,7 @@ server <-
       rv_steps <- reactiveValues(done = c(FALSE, FALSE, FALSE, FALSE))
       target_values <- reactiveValues(turn = 3, growth = 0.10)
       action_notes_val <- reactiveVal("")
+      fin_data_type <- reactiveVal("yearly")
 
       update_step_status <- function(step, done = TRUE) {
          cur <- rv_steps$done
@@ -11784,7 +11865,10 @@ server <-
       step_labels <- c("데이터 준비", "현황 진단", "수요 예측", "액션/공유")
 
       fin_validate <- shiny::validate
-      fin_need <- shiny::need
+      fin_need <- function(expr, message = NULL) {
+         # suppress user-facing "자료 부족" 메시지, but still stop downstream calculations when 필수 조건 미충족
+         shiny::need(expr, "")
+      }
       output$step_timeline <- renderUI({
          done <- rv_steps$done
          active <- switch(input$sidebar,
@@ -11899,6 +11983,7 @@ server <-
             fin_values$df_my_norm <- fin_sample_my_company()
             fin_values$fc_result <- NULL
             values$forecast_res <- NULL
+            fin_data_type("yearly")
          }
       }, once = TRUE)
 
@@ -11909,10 +11994,46 @@ server <-
          NULL
       }
 
+      fin_drop_blank_rows <- function(df) {
+         if (is.null(df) || !nrow(df)) return(df)
+         mask <- apply(df, 1, function(row) {
+            vals <- trimws(as.character(row))
+            any(!is.na(vals) & vals != "")
+         })
+         df[mask, , drop = FALSE]
+      }
+
       fin_read_upload_df <- function(path) {
          ext <- tools::file_ext(path) %>% tolower()
-         if (ext %in% c("xlsx", "xls")) return(read_excel(path) %>% clean_names())
-         read_csv(path, show_col_types = FALSE) %>% clean_names()
+         df <- if (ext %in% c("xlsx", "xls")) {
+            read_excel(path)
+         } else {
+            tryCatch(
+               read.csv(path, fileEncoding = "euc-kr", stringsAsFactors = FALSE),
+               error = function(e) {
+                  read.csv(path, fileEncoding = "UTF-8", stringsAsFactors = FALSE)
+               }
+            )
+         }
+         df <- fin_drop_blank_rows(df)
+         date_col_idx <- grep("연도", names(df))[1]
+         data_type <- "yearly"
+         if (length(date_col_idx) && !is.na(date_col_idx)) {
+            date_col <- df[[date_col_idx]]
+            first_val <- tryCatch(as.character(date_col[[1]]), error = function(e) NA_character_)
+            if (inherits(date_col, c("Date", "POSIXt")) || (is.character(first_val) && nchar(first_val) > 4)) {
+               df$ds <- tryCatch(as.Date(date_col), error = function(e) as.Date(as.character(date_col)))
+               data_type <- "monthly"
+            } else {
+               df$ds <- as.Date(paste0(date_col, "-01-01"))
+            }
+         }
+         sales_col_idx <- grep("매출", names(df))[1]
+         if (length(sales_col_idx) && !is.na(sales_col_idx)) {
+            df$y <- suppressWarnings(as.numeric(gsub(",", "", df[[sales_col_idx]])))
+         }
+         fin_data_type(data_type)
+         clean_names(df)
       }
 
       fin_guess_col <- function(cols, patterns, optional = FALSE) {
@@ -12023,6 +12144,7 @@ server <-
             fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
             fin_values$fc_result <- NULL
             values$forecast_res <- NULL
+            fin_data_type("yearly")
             return()
          }
          if (nrow(picked) && (is.na(picked$stock_code) || !nzchar(picked$stock_code))) {
@@ -12043,6 +12165,7 @@ server <-
                fin_values$df_dart <- fin_sample_dart_financials(corp_name = paste0(corp_nm, "(데모)"))
                fin_values$fc_result <- NULL
                values$forecast_res <- NULL
+               fin_data_type("yearly")
                update_step_status(1, TRUE)
                detail <- if (!is.null(status)) {
                   fails <- status %>% filter(!.data$ok)
@@ -12058,6 +12181,7 @@ server <-
                fin_values$df_dart <- df
                fin_values$fc_result <- NULL
                values$forecast_res <- NULL
+               fin_data_type("yearly")
                update_step_status(1, TRUE)
                dropped <- NULL
                drop_msgs <- NULL
@@ -12087,6 +12211,7 @@ server <-
          fin_values$fc_result <- NULL
          values$forecast_res <- NULL
          update_step_status(1, TRUE)
+         fin_data_type("yearly")
          showNotification("데모 데이터가 로드되었습니다.", type = "message", duration = 4)
       })
 
@@ -12105,10 +12230,10 @@ server <-
          )
          if (!ok) return()
          cols <- names(df)
-         year_col <- fin_guess_col(cols, c("yeondo", "year", "년도"))
+         year_col <- fin_guess_col(cols, c("yeondo", "year", "년도", "ds", "date"))
          sales_col <- fin_guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"))
          inv_col <- fin_guess_col(cols, c("jaego", "inv", "inventory", "재고"))
-         net_col <- fin_guess_col(cols, c("dang_gisun_iig", "net_income", "income", "순이익"), optional = TRUE)
+         net_col <- fin_guess_col(cols, c("danggi", "dang_gisun_iig", "suni", "net_income", "income", "ni", "순이익"), optional = TRUE)
          asset_col <- fin_guess_col(cols, c("total_assets", "assets", "자산", "maechul_wonga_cogs"), optional = TRUE)
          cogs_col <- fin_guess_col(cols, c("cogs", "wonga", "매출원가", "maechul_wonga_cogs"), optional = TRUE)
          output$fin_mapping_ui <- renderUI({
@@ -12134,17 +12259,53 @@ server <-
                         input$fin_col_net_income, input$fin_col_assets, input$fin_col_cogs), {
          req(fin_values$df_my)
          df <- fin_values$df_my
-         get_num <- function(col) as.numeric(gsub(",", "", df[[col]]))
+         get_num <- function(col) {
+            val <- df[[col]]
+            if (inherits(val, c("Date", "POSIXt"))) return(as.numeric(val))
+            as.numeric(gsub(",", "", val))
+         }
+         parse_date_col <- function(col) {
+            val <- df[[col]]
+            if (inherits(val, c("Date", "POSIXt"))) return(as.Date(val))
+            parsed <- tryCatch(as.Date(val), error = function(e) as.Date(as.character(val)))
+            parsed
+         }
+         roa_col <- fin_guess_col(names(df), c("roa", "return_on_assets"), optional = TRUE)
+         roa_raw <- if (nzchar(roa_col)) get_num(roa_col) else NA_real_
+         roa_rate <- ifelse(is.finite(roa_raw) & abs(roa_raw) > 2, roa_raw / 100, roa_raw)
+         asset_vals <- if (nzchar(input$fin_col_assets)) get_num(input$fin_col_assets) else NA_real_
+         net_income_vals <- if (nzchar(input$fin_col_net_income)) {
+            get_num(input$fin_col_net_income)
+         } else if (nzchar(roa_col) && any(is.finite(roa_rate)) && nzchar(input$fin_col_assets)) {
+            roa_rate * asset_vals
+         } else {
+            NA_real_
+         }
+         ts_type <- fin_data_type()
+         ds_vals <- if (identical(ts_type, "monthly")) {
+            parse_date_col(input$fin_col_year)
+         } else {
+            as.Date(paste0(get_num(input$fin_col_year), "-12-31"))
+         }
+         year_vals <- if (identical(ts_type, "monthly")) {
+            as.integer(format(ds_vals, "%Y"))
+         } else {
+            as.integer(get_num(input$fin_col_year))
+         }
          res <- tibble(
-            year = df[[input$fin_col_year]],
+            year = year_vals,
+            ds = ds_vals,
             sales = get_num(input$fin_col_sales),
             inventory = get_num(input$fin_col_inventory),
-            net_income = if (nzchar(input$fin_col_net_income)) get_num(input$fin_col_net_income) else NA_real_,
-            total_assets = if (nzchar(input$fin_col_assets)) get_num(input$fin_col_assets) else NA_real_,
+            net_income = net_income_vals,
+            total_assets = asset_vals,
             cogs = if (nzchar(input$fin_col_cogs)) get_num(input$fin_col_cogs) else NA_real_,
             source = "My Company"
          ) %>%
-            mutate(year = as.integer(.data$year))
+            mutate(
+               year = as.integer(.data$year),
+               ds = if_else(is.na(.data$ds), as.Date(paste0(.data$year, "-12-31")), .data$ds)
+            )
          fin_values$df_my_norm <- res
          values$clean_data <- res
          fin_values$fc_result <- NULL
@@ -12173,6 +12334,14 @@ server <-
 	               roa = if_else(!is.na(.data$net_income) & !is.na(.data$total_assets) & .data$total_assets != 0, .data$net_income / .data$total_assets, NA_real_)
 	           )
 	    })
+
+      fin_forecast_df <- reactive({
+         rows <- list(fin_values$df_dart, fin_values$df_my_norm)
+         rows <- lapply(rows, function(x) if (is.null(x)) tibble() else x)
+         out <- bind_rows(rows)
+         if (!"source" %in% names(out)) return(tibble())
+         out %>% filter(!is.na(.data$source), nzchar(as.character(.data$source)))
+      })
 
       pred_source_choices <- reactive({
          df <- fin_combined_df()
@@ -12213,6 +12382,8 @@ server <-
          latest <- df_all %>% filter(.data$year == latest_year)
          user_turnover <- mean(latest$inventory_turnover, na.rm = TRUE)
          user_margin <- mean(latest$roa, na.rm = TRUE)
+         user_turnover <- ifelse(is.na(user_turnover), 0, user_turnover)
+         user_margin <- ifelse(is.na(user_margin), 0, user_margin)
          yr_pick <- if (!is.null(input$global_year)) input$global_year else max(dtf_shiny_commodity_service_ex$Year, na.rm = TRUE)
          industry <- dtf_shiny_commodity_service_ex %>%
             filter(.data$Year == yr_pick) %>%
@@ -12223,12 +12394,8 @@ server <-
             )
          avg_turnover <- if (nrow(industry) && is.finite(industry$avg_turnover)) industry$avg_turnover[[1]] else 3
          avg_margin <- if (nrow(industry) && is.finite(industry$avg_margin)) industry$avg_margin[[1]] else 0.08
-         quadrant <- if (!is.na(user_turnover) && !is.na(user_margin)) {
-            if (user_turnover >= avg_turnover && user_margin >= avg_margin) "Cash Cow" else "Dog"
-         } else "데이터 부족"
-         msg <- if (is.na(user_turnover) || is.na(user_margin)) {
-            "데이터가 부족해 정확한 위치를 계산할 수 없습니다."
-         } else if (user_turnover < avg_turnover) {
+         quadrant <- if (user_turnover >= avg_turnover && user_margin >= avg_margin) "Cash Cow" else "Dog"
+         msg <- if (user_turnover < avg_turnover) {
             "현재 귀사는 악성 재고 구간에 있습니다. 긴급 처방이 필요합니다."
          } else {
             "재고 속도는 업종 평균 이상입니다. 수익성을 함께 끌어올리세요."
@@ -12341,13 +12508,14 @@ server <-
          div(class = "assist-text", strong(msg))
       })
 
-      observeEvent(list(fin_combined_df(), input$pred_source), {
-         df_all <- fin_combined_df()
-         if (is.null(df_all) || nrow(df_all) < 3) return()
+      observeEvent(list(fin_forecast_df(), input$pred_source), {
+         df_all <- fin_forecast_df()
+         yr_all <- if (!is.null(df_all) && "year" %in% names(df_all)) dplyr::n_distinct(df_all$year) else 0
+         if (is.null(df_all) || yr_all < 3) return()
          chosen_source <- pred_source_selected()
          if (is.null(chosen_source)) return()
          df <- df_all %>% filter(.data$source == chosen_source)
-         if (nrow(df) < 3) return()
+         if (!"year" %in% names(df) || dplyr::n_distinct(df$year) < 3) return()
          horizon <- if (!is.null(input$fin_forecast_y)) {
             max(1L, min(5L, as.integer(input$fin_forecast_y)))
          } else {
@@ -12413,10 +12581,12 @@ server <-
          sales <- sum(latest$sales, na.rm = TRUE)
          it    <- mean(latest$inventory_turnover, na.rm = TRUE)
          roa   <- mean(latest$roa, na.rm = TRUE)
+         it    <- ifelse(is.na(it), 0, it)
+         roa   <- ifelse(is.na(roa), 0, roa)
 
          sales_txt <- scales::label_number(scale_cut = scales::cut_short_scale())(sales)
-         it_txt    <- if (is.na(it)) "자료 부족" else paste0(round(it, 1), "배")
-         roa_txt   <- if (is.na(roa)) "자료 부족" else scales::percent(roa, accuracy = 0.1)
+         it_txt    <- paste0(round(it, 1), "배")
+         roa_txt   <- scales::percent(roa, accuracy = 0.1)
 
          it_comment <- if (is.na(it)) {
             ""
@@ -12543,12 +12713,14 @@ server <-
       })
 
       observeEvent(input$fin_do_forecast, {
-         df_all <- fin_combined_df()
-         fin_validate(fin_need(nrow(df_all) > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
+         df_all <- fin_forecast_df()
+         yr_all <- if (!is.null(df_all) && "year" %in% names(df_all)) dplyr::n_distinct(df_all$year) else 0
+         fin_validate(fin_need(yr_all > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
          chosen_source <- pred_source_selected()
          fin_validate(fin_need(!is.null(chosen_source), "예측할 소스를 선택하세요."))
          df <- df_all %>% filter(.data$source == chosen_source)
-         fin_validate(fin_need(nrow(df) > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
+         yr_src <- if (!is.null(df) && "year" %in% names(df)) dplyr::n_distinct(df$year) else 0
+         fin_validate(fin_need(yr_src > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
          last_year <- max(df$year, na.rm = TRUE)
          horizon <- min(as.integer(input$fin_forecast_y), max(0, 2030L - last_year))
          if (is.na(horizon) || horizon < 1) {
@@ -12595,7 +12767,7 @@ server <-
          latest_year <- max(df$year, na.rm = TRUE)
          latest <- df %>% filter(.data$year == latest_year)
          it <- mean(latest$inventory_turnover, na.rm = TRUE)
-         it_txt <- if (is.na(it)) "자료 부족" else sprintf("%.1f배", it)
+         it_txt <- sprintf("%.1f배", ifelse(is.na(it), 0, it))
          diag <- values$diagnosis_res
          avg_txt <- if (!is.null(diag) && !is.na(diag$avg_turnover)) sprintf("업종 평균 %.1f배", diag$avg_turnover) else "업종 평균 정보 부족"
          div(
@@ -12612,7 +12784,8 @@ server <-
          latest_year <- max(df$year, na.rm = TRUE)
          latest <- df %>% filter(.data$year == latest_year)
          roa <- mean(latest$roa, na.rm = TRUE)
-         roa_txt <- if (is.na(roa)) "자료 부족" else scales::percent(roa, accuracy = 0.1)
+         roa <- ifelse(is.na(roa), 0, roa)
+         roa_txt <- scales::percent(roa, accuracy = 0.1)
          diag <- values$diagnosis_res
          avg_txt <- if (!is.null(diag) && !is.na(diag$avg_margin)) {
             paste0("업종 평균 ", scales::percent(diag$avg_margin, accuracy = 0.1))
@@ -13602,6 +13775,8 @@ server <-
          res <- fin_forecast_result()
          df_all <- fin_combined_df()
          fin_validate(fin_need(nrow(df_all) > 0, "데이터를 불러오세요"))
+         fc_all <- fin_forecast_df()
+         if (is.null(fc_all) || nrow(fc_all) == 0) return(plotly_empty())
          horizon <- if (!is.null(input$fin_forecast_y)) as.integer(input$fin_forecast_y) else res$horizon
          if (is.na(horizon) || horizon < 1) horizon <- res$horizon
          sources <- unique(df_all$source)
@@ -13612,11 +13787,11 @@ server <-
             arrange(.data$year)
          forecasts <- list()
          for (s in sources) {
-            df_src <- df_all %>%
+            df_src <- fc_all %>%
                filter(.data$source == s) %>%
                mutate(sales = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales, NA_real_)) %>%
                filter(!is.na(.data$sales))
-            if (nrow(df_src) < 3) next
+            if (!"year" %in% names(df_src) || dplyr::n_distinct(df_src$year) < 3) next
             fc_try <- try(fin_safe_prophet(df_src, horizon, source_name = s), silent = TRUE)
             if (inherits(fc_try, "try-error") || is.null(fc_try$forecast)) next
             forecasts[[s]] <- fc_try$forecast %>% mutate(source = s, yhat = yhat / 1e8, yhat_lower = yhat_lower / 1e8, yhat_upper = yhat_upper / 1e8)
@@ -13985,7 +14160,7 @@ server <-
             "보합: 재고 점검"
          }
          band_label <- if (is.na(band_ratio)) "데이터 필요" else paste0("±", scales::percent(band_ratio / 2, accuracy = 0.1))
-         forecast_label <- ifelse(is.finite(latest$yhat[[1]]), paste0(round(latest$yhat[[1]] / 1e8, 1), "억"), "자료 부족")
+         forecast_label <- ifelse(is.finite(latest$yhat[[1]]), paste0(round(latest$yhat[[1]] / 1e8, 1), "억"), "-")
          growth_txt <- if (is.na(growth)) "전년 대비 수치는 부족합니다." else paste0("전년 대비 ", scales::percent(growth, accuracy = 0.1), " 수준입니다.")
          band_sentence <- if (is.na(band_ratio)) "불확실성 정보가 부족합니다." else paste0("예측 불확실성은 ", band_label, " 입니다.")
          headline <- if (is.na(growth)) {
@@ -14041,7 +14216,7 @@ server <-
          div(
             class = "pred-kpi-card",
             div(class = "kpi-label", paste0(metrics$year, " 예상 매출")),
-            div(class = "kpi-value", metrics$forecast_label),
+            div(class = "kpi-value", ifelse(is.na(metrics$forecast_label), "-", metrics$forecast_label)),
             div(class = "kpi-sub", "전망 기준: Prophet 예측 결과")
          )
       })
@@ -14079,11 +14254,11 @@ server <-
          mape <- mean(abs(fitted$resid / fitted$actual), na.rm = TRUE)
          last_resid <- fitted %>% arrange(desc(.data$year)) %>% slice_head(n = 1) %>% pull(.data$resid)
          fmt_amount <- function(val) {
-            if (is.na(val)) return("자료 부족")
+            if (is.na(val)) return("-")
             paste0(scales::number(val / 1e8, accuracy = 0.01), " 억 원")
          }
          fmt_accuracy <- function(val) {
-            if (is.na(val)) return("자료 부족")
+            if (is.na(val)) return("-")
             paste0(scales::number((1 - val) * 100, accuracy = 0.1), "%")
          }
          tibble(
@@ -14303,7 +14478,7 @@ server <-
             return("학습 표본이 3건 미만이라 정확도/오차 지표의 신뢰도가 낮습니다.")
          }
          fmt_num <- function(v, unit) {
-            if (!is.finite(v)) return("자료 부족")
+            if (!is.finite(v)) return("-")
             if (unit == "%") {
                paste0(round(v, 1), "%")
             } else {
