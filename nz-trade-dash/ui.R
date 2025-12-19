@@ -93,7 +93,7 @@ siderbar <-
 body <- dashboardBody(
   ## 3.0. CSS styles in header ----------------------------
   tags$head(
-    tags$script("document.title = 'New Zealand Trade Intelligence Dashboard'"),
+    tags$script("document.title = 'Fashion Inventory Forecasting System'"),
     tags$link(rel = "stylesheet", type = "text/css", href = "custom.css")
   ),
 
