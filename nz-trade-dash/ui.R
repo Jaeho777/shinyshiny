@@ -169,7 +169,7 @@ body <- dashboardBody(
                     tags$ul(
                       class = "upload-points",
                       tags$li("필수 컬럼: 연도, 매출, 재고"),
-                      tags$li("선택 컬럼: SKU, 채널, 순이익 등 정밀 진단용")
+                      tags$li("선택 컬럼: SKU, 재고연령(aging), 채널, 순이익 등 정밀 진단용")
                     )
                   ),
                   uiOutput("fin_mapping_ui")
@@ -308,6 +308,45 @@ body <- dashboardBody(
     tabItem(
       tabName = "tab_diagnosis",
       h3("Step 2. Diagnosis: 과재고인가, 기회손실인가?"),
+      box(
+        title = "타겟 범위 & 재고 특성 요약",
+        width = 12,
+        solidHeader = TRUE,
+        status = NULL,
+        class = "diag-main-box",
+        fluidRow(
+          column(
+            width = 4,
+            tags$strong("타겟 소매업종 범위"),
+            tags$ul(
+              tags$li("업종: 의류 쇼핑몰"),
+              tags$li("운영: 1인 운영, 3–5년차 가정"),
+              tags$li("SKU: 소규모/선별 운영"),
+              tags$li("채널: 온라인+오프라인")
+            )
+          ),
+          column(
+            width = 4,
+            tags$strong("의류 브랜드 재고관리 특징"),
+            tags$ul(
+              tags$li("시즌성·트렌드 영향으로 수요 변동 큼"),
+              tags$li("사이즈/컬러 분산으로 묶음 재고 발생"),
+              tags$li("재고가 쌓이면 할인·폐기 비용 증가"),
+              tags$li("리드타임 미스매치 시 품절/과잉 동시 발생")
+            )
+          ),
+          column(
+            width = 4,
+            tags$strong("다품종 소량생산 특성"),
+            tags$ul(
+              tags$li("품목 수는 많지만 판매는 일부에 집중"),
+              tags$li("예측 오차가 커서 과잉/품절 동시 위험"),
+              tags$li("소량 다빈도 발주로 운영 부담 증가"),
+              tags$li("핵심 SKU 중심 운영 기준 필요")
+            )
+          )
+        )
+      ),
       fluidRow(
         box(
           width = 12,
@@ -320,12 +359,18 @@ body <- dashboardBody(
       ),
       fluidRow(
         column(width = 4, uiOutput("fin_kpi_sales")),
-        column(width = 4, uiOutput("fin_kpi_it")),
+        column(width = 4, uiOutput("fin_kpi_inventory")),
         column(width = 4, uiOutput("fin_kpi_roa"))
       ),
       fluidRow(
+        column(width = 3, uiOutput("fin_kpi_turnover")),
+        column(width = 3, uiOutput("fin_kpi_doi")),
+        column(width = 3, uiOutput("fin_kpi_overstock")),
+        column(width = 3, uiOutput("fin_kpi_stockout"))
+      ),
+      fluidRow(
         box(
-          title = "BCG 매트릭스 (재고회전율 vs 영업이익률)",
+          title = "SKU 롱테일 분포",
           width = 8,
           status = NULL,
           solidHeader = TRUE,
@@ -333,7 +378,7 @@ body <- dashboardBody(
           plotlyOutput("fin_quad_plot", height = "380px")
         ),
         box(
-          title = "내 위치 해석",
+          title = "분포 해석",
           width = 4,
           status = NULL,
           solidHeader = TRUE,
@@ -360,10 +405,10 @@ body <- dashboardBody(
             id = "diag_extra_tabs",
             type = "tabs",
             tabPanel(
-              "추세 / 비교",
+              "분포 / 분류",
               fluidRow(
                 box(
-                  title = "매출·재고 추세",
+                  title = "ABC/XYZ 분류",
                   width = 7,
                   status = NULL,
                   solidHeader = TRUE,
@@ -372,7 +417,7 @@ body <- dashboardBody(
                   div(class = "viz-text-lg", textOutput("analysis_delta_note"))
                 ),
                 box(
-                  title = "재고 효율·이익 비교",
+                  title = "재고 연령(aging)",
                   width = 5,
                   status = NULL,
                   solidHeader = TRUE,

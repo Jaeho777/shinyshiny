@@ -12065,6 +12065,7 @@ server <-
                total_assets = c(60000000, 65000000, 70000000),
                cogs = c(70000000, 75000000, 82000000),
                sku = c("SKU-A", "SKU-B", "SKU-C"),
+               stock_age = c(45, 90, 120),
                channel = c("온라인", "오프라인", "온라인")
             )
             readr::write_csv(template, file)
@@ -12236,11 +12237,19 @@ server <-
          net_col <- fin_guess_col(cols, c("danggi", "dang_gisun_iig", "suni", "net_income", "income", "ni", "순이익"), optional = TRUE)
          asset_col <- fin_guess_col(cols, c("total_assets", "assets", "자산", "maechul_wonga_cogs"), optional = TRUE)
          cogs_col <- fin_guess_col(cols, c("cogs", "wonga", "매출원가", "maechul_wonga_cogs"), optional = TRUE)
+         sku_col <- if (!is.null(input$fin_col_sku) && nzchar(input$fin_col_sku) && input$fin_col_sku %in% cols) {
+            input$fin_col_sku
+         } else {
+            fin_guess_col(cols, c("sku", "item", "상품", "제품", "style", "품목"), optional = TRUE)
+         }
+         aging_col <- fin_guess_col(cols, c("age", "aging", "재고일수", "재고기간", "days_in_stock", "stock_age"), optional = TRUE)
          output$fin_mapping_ui <- renderUI({
             tagList(
                selectInput("fin_col_year", "연도 컬럼", choices = cols, selected = year_col),
                selectInput("fin_col_sales", "매출액 컬럼", choices = cols, selected = sales_col),
                selectInput("fin_col_inventory", "재고자산 컬럼", choices = cols, selected = inv_col),
+               selectInput("fin_col_sku", "SKU 컬럼(분포/분류용)", choices = c("", cols), selected = sku_col),
+               selectInput("fin_col_aging", "재고 연령 컬럼(aging)", choices = c("", cols), selected = aging_col),
                selectInput("fin_col_net_income", "당기순이익 컬럼(선택)", choices = c("", cols), selected = net_col),
                selectInput("fin_col_assets", "자산총계 컬럼(선택)", choices = c("", cols), selected = asset_col),
                selectInput("fin_col_cogs", "매출원가 컬럼(선택)", choices = c("", cols), selected = cogs_col)
@@ -12256,6 +12265,7 @@ server <-
       })
 
       observeEvent(list(input$fin_col_year, input$fin_col_sales, input$fin_col_inventory,
+                        input$fin_col_sku, input$fin_col_aging,
                         input$fin_col_net_income, input$fin_col_assets, input$fin_col_cogs), {
          req(fin_values$df_my)
          df <- fin_values$df_my
@@ -12300,6 +12310,8 @@ server <-
             net_income = net_income_vals,
             total_assets = asset_vals,
             cogs = if (nzchar(input$fin_col_cogs)) get_num(input$fin_col_cogs) else NA_real_,
+            sku = if (!is.null(input$fin_col_sku) && nzchar(input$fin_col_sku)) as.character(df[[input$fin_col_sku]]) else NA_character_,
+            stock_age = if (!is.null(input$fin_col_aging) && nzchar(input$fin_col_aging)) get_num(input$fin_col_aging) else NA_real_,
             source = "My Company"
          ) %>%
             mutate(
@@ -12627,25 +12639,61 @@ server <-
       output$fin_ts_plot <- renderPlotly(make_fin_ts_plot(fin_combined_df()))
       output$fin_ts_plot_plus <- renderPlotly(make_fin_ts_plot(fin_combined_df()))
 
-      make_fin_quad_plot <- function(df) {
-         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
-         x_mean <- mean(df$inventory_turnover, na.rm = TRUE)
-         y_mean <- mean(df$roa, na.rm = TRUE)
-         plot_ly(df, x = ~inventory_turnover, y = ~roa, color = ~source, type = "scatter", mode = "markers",
-                 text = ~paste0(source, " (", year, ")")) %>%
+      make_fin_quad_plot <- function(raw_df) {
+         fin_validate(fin_need(!is.null(raw_df) && nrow(raw_df) > 0, "데이터를 불러오세요"))
+         cols <- names(raw_df)
+         sku_col <- if (!is.null(input$fin_col_sku) && nzchar(input$fin_col_sku) && input$fin_col_sku %in% cols) {
+            input$fin_col_sku
+         } else {
+            fin_guess_col(cols, c("sku", "item", "상품", "제품", "style", "품목"), optional = TRUE)
+         }
+         fin_validate(fin_need(nzchar(sku_col) && sku_col %in% cols, "SKU 컬럼이 필요합니다."))
+         sales_col <- if ("sales" %in% cols) {
+            "sales"
+         } else if (!is.null(input$fin_col_sales) && input$fin_col_sales %in% cols) {
+            input$fin_col_sales
+         } else {
+            fin_guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"), optional = TRUE)
+         }
+         fin_validate(fin_need(nzchar(sales_col) && sales_col %in% cols, "매출 컬럼이 필요합니다."))
+         sales_vals <- suppressWarnings(as.numeric(gsub(",", "", raw_df[[sales_col]])))
+         df <- tibble(
+            sku = as.character(raw_df[[sku_col]]),
+            sales = sales_vals
+         ) %>%
+            filter(!is.na(.data$sku), nzchar(.data$sku), is.finite(.data$sales))
+         fin_validate(fin_need(nrow(df) > 0, "SKU/매출 데이터가 부족합니다."))
+         sku_sales <- df %>%
+            group_by(.data$sku) %>%
+            summarize(total_sales = sum(.data$sales, na.rm = TRUE), .groups = "drop") %>%
+            arrange(desc(.data$total_sales)) %>%
+            mutate(
+               rank = row_number(),
+               cum_share = cumsum(.data$total_sales) / sum(.data$total_sales, na.rm = TRUE)
+            )
+         show_n <- min(30, nrow(sku_sales))
+         top <- sku_sales %>% slice_head(n = show_n)
+         plot_ly(top, x = ~rank, y = ~total_sales, type = "bar", name = "SKU 매출",
+                 hovertemplate = paste(
+                    "순위: %{x}<br>",
+                    "SKU: %{customdata}<br>",
+                    "매출: %{y:,.0f}<extra></extra>"
+                 ),
+                 customdata = ~sku) %>%
+            add_trace(
+               x = ~rank, y = ~cum_share * 100,
+               type = "scatter", mode = "lines+markers",
+               name = "누적 비중(%)", yaxis = "y2",
+               hovertemplate = "누적 비중: %{y:.1f}%<extra></extra>"
+            ) %>%
             layout(
-               shapes = list(
-                  list(type = "line", x0 = x_mean, x1 = x_mean, y0 = 0, y1 = 1, xref = "x", yref = "paper",
-                       line = list(dash = "dash", color = "gray")),
-                  list(type = "line", x0 = 0, x1 = 1, y0 = y_mean, y1 = y_mean, xref = "paper", yref = "y",
-                       line = list(dash = "dash", color = "gray"))
-               ),
-               xaxis = list(title = "재고자산회전율"),
-               yaxis = list(title = "ROA")
+               xaxis = list(title = "SKU 매출 순위 (상위 30개)"),
+               yaxis = list(title = "매출액"),
+               yaxis2 = list(title = "누적 비중(%)", overlaying = "y", side = "right", range = c(0, 100))
             )
       }
-      output$fin_quad_plot <- renderPlotly(make_fin_quad_plot(fin_combined_df()))
-      output$fin_quad_plot_plus <- renderPlotly(make_fin_quad_plot(fin_combined_df()))
+      output$fin_quad_plot <- renderPlotly(make_fin_quad_plot(values$raw_data))
+      output$fin_quad_plot_plus <- renderPlotly(make_fin_quad_plot(values$raw_data))
 
       make_fin_fc_plot <- function(res, df_all) {
          fin_validate(fin_need(nrow(df_all) > 0, "데이터를 불러오세요"))
@@ -12761,6 +12809,26 @@ server <-
          )
       })
 
+      output$fin_kpi_inventory <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         inventory <- sum(latest$inventory, na.rm = TRUE)
+         formatted <- scales::label_number(scale_cut = scales::cut_short_scale())(inventory)
+         sub_txt <- if (is.na(inventory) || inventory == 0) {
+            "재고 데이터 부족"
+         } else {
+            paste0("최근 연도 합계 (", latest_year, ")")
+         }
+         div(
+            class = "diag-kpi-card",
+            div(class = "kpi-label", "재고자산"),
+            div(class = "kpi-value", formatted),
+            div(class = "kpi-sub", sub_txt)
+         )
+      })
+
       output$fin_kpi_it <- renderUI({
          df <- fin_combined_df()
          fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
@@ -12796,6 +12864,95 @@ server <-
             div(class = "kpi-value", roa_txt),
             div(class = "kpi-sub", avg_txt)
          )
+      })
+
+      output$fin_kpi_turnover <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         it <- mean(latest$inventory_turnover, na.rm = TRUE)
+         it_txt <- if (is.na(it)) "-" else sprintf("%.1f배", it)
+         sub_txt <- paste0("최근 연도 평균 (", latest_year, ")")
+         div(
+            class = "diag-kpi-card",
+            div(class = "kpi-label", "재고회전율"),
+            div(class = "kpi-value", it_txt),
+            div(class = "kpi-sub", sub_txt)
+         )
+      })
+
+      output$fin_kpi_doi <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         it <- mean(latest$inventory_turnover, na.rm = TRUE)
+         doi <- if (is.na(it) || it <= 0) NA_real_ else 365 / it
+         doi_txt <- if (is.na(doi)) "-" else paste0(round(doi), "일")
+         sub_txt <- if (is.na(it)) "회전율 데이터 부족" else paste0("회전율 ", sprintf("%.1f배", it))
+         div(
+            class = "diag-kpi-card",
+            div(class = "kpi-label", "재고 소진기간(DOI)"),
+            div(class = "kpi-value", doi_txt),
+            div(class = "kpi-sub", sub_txt)
+         )
+      })
+
+      output$fin_kpi_overstock <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         sales <- sum(latest$sales, na.rm = TRUE)
+         inventory <- sum(latest$inventory, na.rm = TRUE)
+         inv_ratio <- if (!is.na(sales) && sales != 0) inventory / sales else NA_real_
+         ratio_txt <- if (is.na(inv_ratio)) "-" else scales::percent(inv_ratio, accuracy = 0.1)
+         risk_txt <- if (is.na(inv_ratio)) {
+            "데이터 부족"
+         } else if (inv_ratio >= 0.5) {
+            "과잉 위험 높음"
+         } else if (inv_ratio >= 0.3) {
+            "과잉 위험 보통"
+         } else {
+            "과잉 위험 낮음"
+         }
+         div(
+            class = "diag-kpi-card",
+            div(class = "kpi-label", "과잉재고 비중"),
+            div(class = "kpi-value", ratio_txt),
+            div(class = "kpi-sub", risk_txt)
+         )
+      })
+
+      output$fin_kpi_stockout <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오세요"))
+         latest_year <- max(df$year, na.rm = TRUE)
+         latest <- df %>% filter(.data$year == latest_year)
+         prev_year <- suppressWarnings(max(df$year[df$year < latest_year], na.rm = TRUE))
+         prev <- if (is.finite(prev_year)) df %>% filter(.data$year == prev_year) else NULL
+         sales <- sum(latest$sales, na.rm = TRUE)
+         prev_sales <- if (!is.null(prev) && nrow(prev)) sum(prev$sales, na.rm = TRUE) else NA_real_
+         sales_growth <- if (!is.na(prev_sales) && prev_sales != 0) (sales - prev_sales) / prev_sales else NA_real_
+         inventory <- sum(latest$inventory, na.rm = TRUE)
+         inv_ratio <- if (!is.na(sales) && sales != 0) inventory / sales else NA_real_
+        risk <- if (is.na(inv_ratio)) {
+           "데이터 부족"
+        } else if (inv_ratio <= 0.15 || (!is.na(sales_growth) && sales_growth >= 0.2 && inv_ratio <= 0.2)) {
+            "높음"
+        } else if (inv_ratio <= 0.25) {
+            "보통"
+        } else {
+            "낮음"
+        }
+        sub_txt <- if (is.na(sales_growth)) "전년 매출 비교 불가" else paste0("전년 대비 ", scales::percent(sales_growth, accuracy = 0.1))
+        div(
+           class = "diag-kpi-card",
+            div(class = "kpi-label", "품절 리스크"),
+            div(class = "kpi-value", risk),
+            div(class = "kpi-sub", sub_txt)
+        )
       })
 
       output$diag_status_copy <- renderUI({
@@ -13554,50 +13711,107 @@ server <-
       })
 
       output$analysis_plot_1 <- renderPlotly({
-         df <- analysis_df() %>%
-            mutate(sales_clean = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales, NA_real_))
-         plot_ly(
-            df,
-            x = ~year, y = ~sales_clean / 1e8, color = ~source,
-            type = "scatter", mode = "lines+markers",
-            connectgaps = TRUE,
-            hovertemplate = paste(
-               "연도: %{x}<br>",
-               "매출: %{y:.1f} 억 원<br>",
-               "소스: %{color}<extra></extra>"
+         raw_df <- values$raw_data
+         fin_validate(fin_need(!is.null(raw_df) && nrow(raw_df) > 0, "데이터를 불러오세요"))
+         cols <- names(raw_df)
+         sku_col <- fin_guess_col(cols, c("sku", "item", "상품", "제품", "style", "품목"), optional = TRUE)
+         fin_validate(fin_need(nzchar(sku_col) && sku_col %in% cols, "SKU 컬럼이 필요합니다."))
+         sales_col <- if ("sales" %in% cols) {
+            "sales"
+         } else if (!is.null(input$fin_col_sales) && input$fin_col_sales %in% cols) {
+            input$fin_col_sales
+         } else {
+            fin_guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"), optional = TRUE)
+         }
+         fin_validate(fin_need(nzchar(sales_col) && sales_col %in% cols, "매출 컬럼이 필요합니다."))
+         period_col <- if ("year" %in% cols) {
+            "year"
+         } else if (!is.null(input$fin_col_year) && input$fin_col_year %in% cols) {
+            input$fin_col_year
+         } else {
+            fin_guess_col(cols, c("year", "date", "month", "ds", "일자", "기간"), optional = TRUE)
+         }
+         sales_vals <- suppressWarnings(as.numeric(gsub(",", "", raw_df[[sales_col]])))
+         sku_vals <- as.character(raw_df[[sku_col]])
+         period_vals <- if (nzchar(period_col) && period_col %in% cols) raw_df[[period_col]] else seq_len(nrow(raw_df))
+         period_clean <- if (inherits(period_vals, c("Date", "POSIXt"))) {
+            as.Date(period_vals)
+         } else {
+            suppressWarnings(as.integer(gsub("[^0-9]", "", as.character(period_vals))))
+         }
+         df <- tibble(
+            sku = sku_vals,
+            period = period_clean,
+            sales = sales_vals
+         ) %>%
+            filter(!is.na(.data$sku), nzchar(.data$sku), is.finite(.data$sales))
+         fin_validate(fin_need(nrow(df) > 0, "SKU/매출 데이터가 부족합니다."))
+         sku_period <- df %>%
+            group_by(.data$sku, .data$period) %>%
+            summarize(sales = sum(.data$sales, na.rm = TRUE), .groups = "drop")
+         sku_stats <- sku_period %>%
+            group_by(.data$sku) %>%
+            summarize(
+               total = sum(.data$sales, na.rm = TRUE),
+               mean_sales = mean(.data$sales, na.rm = TRUE),
+               sd_sales = sd(.data$sales, na.rm = TRUE),
+               .groups = "drop"
+            ) %>%
+            mutate(
+               cv = if_else(is.finite(.data$mean_sales) & .data$mean_sales > 0, .data$sd_sales / .data$mean_sales, NA_real_)
+            ) %>%
+            arrange(desc(.data$total))
+         fin_validate(fin_need(nrow(sku_stats) > 0, "SKU 통계가 부족합니다."))
+         total_sales <- sum(sku_stats$total, na.rm = TRUE)
+         sku_stats <- sku_stats %>%
+            mutate(
+               cum_share = cumsum(.data$total) / ifelse(total_sales == 0, 1, total_sales),
+               abc = case_when(
+                  .data$cum_share <= 0.8 ~ "A",
+                  .data$cum_share <= 0.95 ~ "B",
+                  TRUE ~ "C"
+               ),
+               xyz = case_when(
+                  is.na(.data$cv) ~ "Z",
+                  .data$cv <= 0.5 ~ "X",
+                  .data$cv <= 1.0 ~ "Y",
+                  TRUE ~ "Z"
+               )
             )
+         heat <- sku_stats %>%
+            count(.data$abc, .data$xyz) %>%
+            complete(abc = c("A", "B", "C"), xyz = c("X", "Y", "Z"), fill = list(n = 0))
+         plot_ly(
+            heat,
+            x = ~abc, y = ~xyz, z = ~n,
+            type = "heatmap",
+            text = ~paste0("SKU ", n, "개"),
+            hovertemplate = "ABC: %{x}<br>XYZ: %{y}<br>SKU: %{z}개<extra></extra>"
          ) %>%
             layout(
-               yaxis = list(title = "매출액 (억 원)", tickformat = ",.0f"),
-               xaxis = list(title = "연도")
+               xaxis = list(title = "ABC (매출 기여도)"),
+               yaxis = list(title = "XYZ (수요 변동성)")
             )
       })
 
       output$analysis_plot_2 <- renderPlotly({
-         df <- analysis_df() %>%
-            group_by(.data$source) %>%
-            summarize(
-               inventory_turnover = mean(.data$inventory_turnover, na.rm = TRUE),
-               roa = mean(.data$roa, na.rm = TRUE),
-               .groups = "drop"
+         raw_df <- values$raw_data
+         fin_validate(fin_need(!is.null(raw_df) && nrow(raw_df) > 0, "데이터를 불러오세요"))
+         cols <- names(raw_df)
+         age_col <- if (!is.null(input$fin_col_aging) && nzchar(input$fin_col_aging) && input$fin_col_aging %in% cols) {
+            input$fin_col_aging
+         } else {
+            fin_guess_col(cols, c("age", "aging", "재고일수", "재고기간", "days_in_stock", "stock_age"), optional = TRUE)
+         }
+         fin_validate(fin_need(nzchar(age_col) && age_col %in% cols, "재고 연령(aging) 컬럼이 필요합니다."))
+         age_vals <- suppressWarnings(as.numeric(gsub(",", "", raw_df[[age_col]])))
+         df <- tibble(age = age_vals) %>% filter(is.finite(.data$age))
+         fin_validate(fin_need(nrow(df) > 0, "재고 연령 데이터가 부족합니다."))
+         plot_ly(df, x = ~age, type = "histogram", nbinsx = 20) %>%
+            layout(
+               xaxis = list(title = "재고 보관 일수"),
+               yaxis = list(title = "SKU 수")
             )
-         fin_validate(fin_need(nrow(df) > 0, "지표를 계산할 수 없습니다."))
-         p_turn <- plot_ly(
-            df,
-            x = ~source, y = ~inventory_turnover,
-            type = "bar", name = "재고회전율(배)",
-            hovertemplate = "소스: %{x}<br>회전율: %{y:.2f} 배<extra></extra>"
-         ) %>%
-            layout(yaxis = list(title = "재고회전율(배)"), xaxis = list(title = ""))
-         p_roa <- plot_ly(
-            df,
-            x = ~source, y = ~roa * 100,
-            type = "bar", name = "ROA(%)",
-            hovertemplate = "소스: %{x}<br>ROA: %{y:.2f}%<extra></extra>"
-         ) %>%
-            layout(yaxis = list(title = "ROA(%)"), xaxis = list(title = ""))
-         subplot(p_turn, p_roa, nrows = 1, shareX = TRUE, titleX = FALSE, margin = 0.05) %>%
-            layout(showlegend = FALSE)
       })
 
       output$analysis_plot_3 <- renderPlotly({
@@ -13626,17 +13840,25 @@ server <-
       })
 
       output$analysis_desc_1 <- renderText({
-         df <- analysis_df()
-         latest_year <- max(df$year, na.rm = TRUE)
-         latest <- df %>% filter(.data$year == latest_year)
-         by_source <- latest %>%
-            group_by(.data$source) %>%
-            summarize(sales = sum(.data$sales, na.rm = TRUE), .groups = "drop") %>%
-            arrange(desc(.data$sales))
-         fin_validate(fin_need(nrow(by_source) > 0, "매출 비교를 위한 데이터가 없습니다."))
-         leader <- by_source %>% slice_head(n = 1)
-         sales_txt <- scales::label_number(scale_cut = scales::cut_short_scale())(leader$sales)
-         paste0(latest_year, "년 매출 규모는 ", leader$source, "이(가) 약 ", sales_txt, "로 가장 큽니다.")
+         raw_df <- values$raw_data
+         fin_validate(fin_need(!is.null(raw_df) && nrow(raw_df) > 0, "데이터를 불러오세요"))
+         cols <- names(raw_df)
+         age_col <- if (!is.null(input$fin_col_aging) && nzchar(input$fin_col_aging) && input$fin_col_aging %in% cols) {
+            input$fin_col_aging
+         } else {
+            fin_guess_col(cols, c("age", "aging", "재고일수", "재고기간", "days_in_stock", "stock_age"), optional = TRUE)
+         }
+         fin_validate(fin_need(nzchar(age_col) && age_col %in% cols, "재고 연령(aging) 컬럼이 필요합니다."))
+         age_vals <- suppressWarnings(as.numeric(gsub(",", "", raw_df[[age_col]])))
+         age_vals <- age_vals[is.finite(age_vals)]
+         fin_validate(fin_need(length(age_vals) > 0, "재고 연령 데이터가 부족합니다."))
+         avg_age <- mean(age_vals, na.rm = TRUE)
+         med_age <- median(age_vals, na.rm = TRUE)
+         old_ratio <- mean(age_vals >= 90, na.rm = TRUE)
+         paste0(
+            "평균 보관 ", round(avg_age), "일, 중앙값 ", round(med_age), "일. ",
+            "90일 이상 재고 비중 ", scales::percent(old_ratio, accuracy = 0.1)
+         )
       })
 
       output$analysis_desc_2 <- renderText({
@@ -13702,21 +13924,42 @@ server <-
       })
 
       output$analysis_delta_note <- renderText({
-         df <- analysis_df()
-         focus <- analysis_focus_source()
-         others <- df %>% filter(.data$source != focus)
-         me <- df %>% filter(.data$source == focus)
-         if (nrow(others) == 0 || nrow(me) == 0) return("비교 대상이 없습니다.")
-         latest_year <- max(me$year, na.rm = TRUE)
-         me_latest <- me %>% filter(.data$year == latest_year)
-         others_latest <- others %>% filter(.data$year == latest_year)
-         if (nrow(others_latest) == 0) return("동일 연도 비교 대상 없음.")
-         me_it <- mean(me_latest$inventory_turnover, na.rm = TRUE)
-         peer_it <- mean(others_latest$inventory_turnover, na.rm = TRUE)
-         delta <- me_it - peer_it
-         if (is.na(delta)) return("재고회전율 비교를 위한 데이터가 부족합니다.")
-         dir <- if (delta > 0) "높습니다" else "낮습니다"
-         paste0("재고회전율이 경쟁사 평균보다 ", abs(round(delta, 2)), "배 ", dir, ".")
+         raw_df <- values$raw_data
+         fin_validate(fin_need(!is.null(raw_df) && nrow(raw_df) > 0, "데이터를 불러오세요"))
+         cols <- names(raw_df)
+         sku_col <- fin_guess_col(cols, c("sku", "item", "상품", "제품", "style", "품목"), optional = TRUE)
+         sales_col <- if ("sales" %in% cols) {
+            "sales"
+         } else if (!is.null(input$fin_col_sales) && input$fin_col_sales %in% cols) {
+            input$fin_col_sales
+         } else {
+            fin_guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"), optional = TRUE)
+         }
+         fin_validate(fin_need(nzchar(sku_col) && sku_col %in% cols, "SKU 컬럼이 필요합니다."))
+         fin_validate(fin_need(nzchar(sales_col) && sales_col %in% cols, "매출 컬럼이 필요합니다."))
+         sales_vals <- suppressWarnings(as.numeric(gsub(",", "", raw_df[[sales_col]])))
+         df <- tibble(
+            sku = as.character(raw_df[[sku_col]]),
+            sales = sales_vals
+         ) %>%
+            filter(!is.na(.data$sku), nzchar(.data$sku), is.finite(.data$sales))
+         fin_validate(fin_need(nrow(df) > 0, "SKU/매출 데이터가 부족합니다."))
+         sku_sales <- df %>%
+            group_by(.data$sku) %>%
+            summarize(total = sum(.data$sales, na.rm = TRUE), .groups = "drop") %>%
+            arrange(desc(.data$total))
+         total_sales <- sum(sku_sales$total, na.rm = TRUE)
+         sku_sales <- sku_sales %>%
+            mutate(cum_share = cumsum(.data$total) / ifelse(total_sales == 0, 1, total_sales))
+         a_share <- sku_sales %>% filter(.data$cum_share <= 0.8) %>% summarize(val = sum(.data$total, na.rm = TRUE) / total_sales) %>% pull(val)
+         top10_share <- sku_sales %>% slice_head(n = min(10, nrow(sku_sales))) %>%
+            summarize(val = sum(.data$total, na.rm = TRUE) / total_sales) %>% pull(val)
+         paste0(
+            "A군(상위 80%) 매출 비중 ",
+            scales::percent(a_share, accuracy = 0.1),
+            ", 상위 10개 SKU 비중 ",
+            scales::percent(top10_share, accuracy = 0.1)
+         )
       })
 
       output$analysis_insight_main <- renderValueBox({
