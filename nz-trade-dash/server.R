@@ -12003,6 +12003,71 @@ server <-
          df[mask, , drop = FALSE]
       }
 
+      fin_find_col <- function(cols, patterns) {
+         hit <- which(str_detect(cols, regex(paste(patterns, collapse = "|"), ignore_case = TRUE)))[1]
+         if (length(hit) && !is.na(hit)) cols[[hit]] else ""
+      }
+
+      fin_parse_num <- function(x) {
+         if (is.null(x)) return(NA_real_)
+         if (is.numeric(x)) return(as.numeric(x))
+         x_chr <- trimws(as.character(x))
+         x_chr <- gsub(",", "", x_chr)
+         x_chr <- gsub("[^0-9\\.-]", "", x_chr)
+         suppressWarnings(as.numeric(x_chr))
+      }
+
+      fin_parse_invoice_date <- function(x) {
+         if (inherits(x, c("Date", "POSIXt"))) return(as.Date(x))
+         x_chr <- trimws(as.character(x))
+         parsed <- suppressWarnings(lubridate::parse_date_time(
+            x_chr,
+            orders = c(
+               "Ymd HMS", "Ymd HM", "Ymd",
+               "Y.m.d HMS", "Y.m.d HM", "Y.m.d",
+               "Y-m-d HMS", "Y-m-d HM", "Y-m-d",
+               "Y/m/d HMS", "Y/m/d HM", "Y/m/d"
+            ),
+            tz = "UTC"
+         ))
+         as.Date(parsed)
+      }
+
+      fin_detect_invoice <- function(cols) {
+         if (is.null(cols) || !length(cols)) return(FALSE)
+         date_col <- fin_find_col(cols, c("invoice_date", "invoicedate", "order_date", "sales_date", "transaction_date", "거래일", "판매일", "주문일"))
+         qty_col <- fin_find_col(cols, c("quantity", "qty", "수량", "판매수량", "출고수량", "판매량"))
+         price_col <- fin_find_col(cols, c("unit_price", "unitprice", "price", "단가", "판매가", "매출단가"))
+         nzchar(date_col) && nzchar(qty_col) && nzchar(price_col)
+      }
+
+      fin_apply_invoice_cols <- function(df) {
+         cols <- names(df)
+         date_col <- fin_find_col(cols, c("invoice_date", "invoicedate", "order_date", "sales_date", "transaction_date", "거래일", "판매일", "주문일"))
+         qty_col <- fin_find_col(cols, c("quantity", "qty", "수량", "판매수량", "출고수량", "판매량"))
+         price_col <- fin_find_col(cols, c("unit_price", "unitprice", "price", "단가", "판매가", "매출단가"))
+         if (!nzchar(date_col) || !nzchar(qty_col) || !nzchar(price_col)) {
+            return(list(df = df, matched = FALSE))
+         }
+         sku_col <- fin_find_col(cols, c("stock_code", "stockcode", "sku", "item_code", "product_code", "상품코드", "품번", "품목코드"))
+         dates <- fin_parse_invoice_date(df[[date_col]])
+         qty <- fin_parse_num(df[[qty_col]])
+         price <- fin_parse_num(df[[price_col]])
+         if (!"sales" %in% cols) df$sales <- qty * price
+         if (!"inventory" %in% cols) df$inventory <- abs(qty)
+         if (!"year" %in% cols) df$year <- as.integer(format(dates, "%Y"))
+         if (!"ds" %in% cols) df$ds <- as.Date(dates)
+         if (nzchar(sku_col) && !"sku" %in% cols) df$sku <- as.character(df[[sku_col]])
+         list(
+            df = df,
+            matched = TRUE,
+            date_col = date_col,
+            qty_col = qty_col,
+            price_col = price_col,
+            sku_col = sku_col
+         )
+      }
+
       fin_read_upload_df <- function(path) {
          ext <- tools::file_ext(path) %>% tolower()
          df <- if (ext %in% c("xlsx", "xls")) {
@@ -12016,9 +12081,15 @@ server <-
             )
          }
          df <- fin_drop_blank_rows(df)
-         date_col_idx <- grep("연도", names(df))[1]
+         df <- clean_names(df)
+         invoice_meta <- NULL
+         if (fin_detect_invoice(names(df))) {
+            invoice_meta <- fin_apply_invoice_cols(df)
+            df <- invoice_meta$df
+         }
+         date_col_idx <- grep("연도|year", names(df))[1]
          data_type <- "yearly"
-         if (length(date_col_idx) && !is.na(date_col_idx)) {
+         if (length(date_col_idx) && !is.na(date_col_idx) && !"ds" %in% names(df)) {
             date_col <- df[[date_col_idx]]
             first_val <- tryCatch(as.character(date_col[[1]]), error = function(e) NA_character_)
             if (inherits(date_col, c("Date", "POSIXt")) || (is.character(first_val) && nchar(first_val) > 4)) {
@@ -12028,12 +12099,13 @@ server <-
                df$ds <- as.Date(paste0(date_col, "-01-01"))
             }
          }
-         sales_col_idx <- grep("매출", names(df))[1]
+         sales_col_idx <- grep("매출|sales|revenue", names(df))[1]
          if (length(sales_col_idx) && !is.na(sales_col_idx)) {
             df$y <- suppressWarnings(as.numeric(gsub(",", "", df[[sales_col_idx]])))
          }
          fin_data_type(data_type)
-         clean_names(df)
+         attr(df, "invoice_meta") <- invoice_meta
+         df
       }
 
       fin_guess_col <- function(cols, patterns, optional = FALSE) {
@@ -12219,6 +12291,19 @@ server <-
       observeEvent(input$fin_upload, {
          req(input$fin_upload$datapath)
          df <- fin_read_upload_df(input$fin_upload$datapath)
+         invoice_meta <- attr(df, "invoice_meta")
+         if (!is.null(invoice_meta) && isTRUE(invoice_meta$matched)) {
+            msg <- paste0(
+               "Invoice 데이터 감지: 매출 = ",
+               invoice_meta$qty_col,
+               " × ",
+               invoice_meta$price_col,
+               ", 재고 = ",
+               invoice_meta$qty_col,
+               "로 자동 계산했습니다."
+            )
+            showNotification(msg, type = "message", duration = 6)
+         }
          ok <- tryCatch(
             {
                fin_validate_upload_df(df)
@@ -12231,14 +12316,29 @@ server <-
          )
          if (!ok) return()
          cols <- names(df)
-         year_col <- fin_guess_col(cols, c("yeondo", "year", "년도", "ds", "date"))
-         sales_col <- fin_guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"))
-         inv_col <- fin_guess_col(cols, c("jaego", "inv", "inventory", "재고"))
+         is_invoice <- !is.null(invoice_meta) && isTRUE(invoice_meta$matched)
+         year_col <- if (is_invoice && "year" %in% cols) {
+            "year"
+         } else {
+            fin_guess_col(cols, c("yeondo", "year", "년도", "ds", "date"))
+         }
+         sales_col <- if (is_invoice && "sales" %in% cols) {
+            "sales"
+         } else {
+            fin_guess_col(cols, c("maechul", "sale", "sales", "revenue", "매출"))
+         }
+         inv_col <- if (is_invoice && "inventory" %in% cols) {
+            "inventory"
+         } else {
+            fin_guess_col(cols, c("jaego", "inv", "inventory", "재고"))
+         }
          net_col <- fin_guess_col(cols, c("danggi", "dang_gisun_iig", "suni", "net_income", "income", "ni", "순이익"), optional = TRUE)
          asset_col <- fin_guess_col(cols, c("total_assets", "assets", "자산", "maechul_wonga_cogs"), optional = TRUE)
          cogs_col <- fin_guess_col(cols, c("cogs", "wonga", "매출원가", "maechul_wonga_cogs"), optional = TRUE)
          sku_col <- if (!is.null(input$fin_col_sku) && nzchar(input$fin_col_sku) && input$fin_col_sku %in% cols) {
             input$fin_col_sku
+         } else if (is_invoice && "sku" %in% cols) {
+            "sku"
          } else {
             fin_guess_col(cols, c("sku", "item", "상품", "제품", "style", "품목"), optional = TRUE)
          }
@@ -12277,7 +12377,8 @@ server <-
          parse_date_col <- function(col) {
             val <- df[[col]]
             if (inherits(val, c("Date", "POSIXt"))) return(as.Date(val))
-            parsed <- tryCatch(as.Date(val), error = function(e) as.Date(as.character(val)))
+            parsed <- tryCatch(as.Date(val), error = function(e) NA)
+            if (all(is.na(parsed))) parsed <- fin_parse_invoice_date(val)
             parsed
          }
          roa_col <- fin_guess_col(names(df), c("roa", "return_on_assets"), optional = TRUE)
