@@ -405,7 +405,7 @@ fin_safe_prophet <- function(df, horizon, source_name = NULL) {
       filter(!is.na(.data$ds), is.finite(.data$y), .data$y != 0) %>%
       arrange(.data$ds) %>%
       mutate(year = as.integer(format(.data$ds, "%Y")))
-   if (nrow(clean) < 3) stop("예측을 위해 매출이 채워진 3개 연도 이상이 필요합니다.")
+   if (nrow(clean) < 3) stop("예측을 위해 매출이 채워진 시점이 3개 이상 필요합니다.")
    m <- prophet(
       clean %>% transmute(ds = .data$ds, y = .data$y),
       seasonality.mode = if (data_type == "monthly") "multiplicative" else "additive",
@@ -11897,6 +11897,7 @@ server <-
             }
          }
          skus <- c(skus, manual_values$sku_custom, manual_values$stock$sku)
+         skus <- stringi::stri_trans_nfkc(trimws(skus))
          skus <- sort(unique(skus[nzchar(skus)]))
          skus
       })
@@ -12064,6 +12065,53 @@ server <-
          as.Date(parsed)
       }
 
+      fin_ts_info <- function(df) {
+         if (is.null(df) || nrow(df) == 0) {
+            return(list(
+               period_count = 0L,
+               year_count = 0L,
+               is_subyear = FALSE,
+               label = "연도",
+               count_suffix = "개 연도"
+            ))
+         }
+         ds_vals <- if ("ds" %in% names(df)) df$ds else NULL
+         if (!is.null(ds_vals)) {
+            ds_vals <- suppressWarnings(as.Date(as.character(ds_vals)))
+            ds_vals <- ds_vals[!is.na(ds_vals)]
+         }
+         if (is.null(ds_vals) || length(ds_vals) == 0) {
+            yrs <- if ("year" %in% names(df)) suppressWarnings(as.integer(df$year)) else integer()
+            yrs <- yrs[is.finite(yrs)]
+            yr_count <- length(unique(yrs))
+            return(list(
+               period_count = yr_count,
+               year_count = yr_count,
+               is_subyear = FALSE,
+               label = "연도",
+               count_suffix = "개 연도"
+            ))
+         }
+         years <- suppressWarnings(as.integer(format(ds_vals, "%Y")))
+         years <- years[is.finite(years)]
+         year_count <- length(unique(years))
+         month_count <- length(unique(format(ds_vals, "%Y-%m")))
+         day_count <- length(unique(ds_vals))
+         is_subyear <- month_count > year_count || day_count > year_count
+         period_count <- if (is_subyear) month_count else year_count
+         list(
+            period_count = period_count,
+            year_count = year_count,
+            is_subyear = is_subyear,
+            label = if (is_subyear) "개월" else "연도",
+            count_suffix = if (is_subyear) "개월" else "개 연도"
+         )
+      }
+
+      fin_min_periods <- function(info) {
+         if (isTRUE(info$is_subyear)) 3L else 3L
+      }
+
       fin_detect_invoice <- function(cols) {
          if (is.null(cols) || !length(cols)) return(FALSE)
          date_col <- fin_find_col(cols, c("invoice_date", "invoicedate", "order_date", "sales_date", "transaction_date", "거래일", "판매일", "주문일"))
@@ -12133,6 +12181,12 @@ server <-
          sales_col_idx <- grep("매출|sales|revenue", names(df))[1]
          if (length(sales_col_idx) && !is.na(sales_col_idx)) {
             df$y <- suppressWarnings(as.numeric(gsub(",", "", df[[sales_col_idx]])))
+         }
+         ts_info <- fin_ts_info(df)
+         if (!is.null(invoice_meta) && isTRUE(invoice_meta$matched)) {
+            data_type <- "monthly"
+         } else if (isTRUE(ts_info$is_subyear)) {
+            data_type <- "monthly"
          }
          fin_data_type(data_type)
          attr(df, "invoice_meta") <- invoice_meta
@@ -12348,8 +12402,16 @@ server <-
          if (!ok) return()
          cols <- names(df)
          is_invoice <- !is.null(invoice_meta) && isTRUE(invoice_meta$matched)
-         year_col <- if (is_invoice && "year" %in% cols) {
-            "year"
+         year_col <- if (is_invoice) {
+            if (!is.null(invoice_meta$date_col) && nzchar(invoice_meta$date_col) && invoice_meta$date_col %in% cols) {
+               invoice_meta$date_col
+            } else if ("ds" %in% cols) {
+               "ds"
+            } else if ("year" %in% cols) {
+               "year"
+            } else {
+               fin_guess_col(cols, c("yeondo", "year", "년도", "ds", "date"))
+            }
          } else {
             fin_guess_col(cols, c("yeondo", "year", "년도", "ds", "date"))
          }
@@ -12495,6 +12557,13 @@ server <-
          updateSelectInput(session, "manual_sku_pick", choices = choices, selected = selected)
       }, ignoreInit = TRUE)
 
+      observeEvent(input$manual_sku_pick, {
+         cur_new <- trimws(if (is.null(input$manual_sku_new)) "" else input$manual_sku_new)
+         if (nzchar(cur_new)) {
+            updateTextInput(session, "manual_sku_new", value = "")
+         }
+      }, ignoreInit = TRUE)
+
       observeEvent(input$manual_sku_add, {
          new_sku <- trimws(if (is.null(input$manual_sku_new)) "" else input$manual_sku_new)
          if (!nzchar(new_sku)) {
@@ -12508,12 +12577,24 @@ server <-
       observeEvent(input$manual_save, {
          sku_pick <- trimws(if (is.null(input$manual_sku_pick)) "" else input$manual_sku_pick)
          sku_new <- trimws(if (is.null(input$manual_sku_new)) "" else input$manual_sku_new)
-         sku <- if (nzchar(sku_new)) sku_new else sku_pick
+         sku_pick <- stringi::stri_trans_nfkc(trimws(sku_pick))
+         sku_new <- stringi::stri_trans_nfkc(trimws(sku_new))
+         choices <- manual_sku_choices()
+         use_new <- nzchar(sku_new) && (!nzchar(sku_pick) || !(sku_new %in% choices))
+         sku <- if (use_new) sku_new else sku_pick
          if (!nzchar(sku)) {
             showNotification("상품을 선택하거나 새 SKU를 입력하세요.", type = "warning", duration = 3)
             return()
          }
-         stock_date <- if (!is.null(input$manual_stock_date)) as.Date(input$manual_stock_date) else Sys.Date()
+         existing <- manual_values$stock %>%
+            mutate(sku = stringi::stri_trans_nfkc(trimws(.data$sku))) %>%
+            pull(.data$sku)
+         is_update <- sku %in% existing
+         stock_date_raw <- input$manual_stock_date
+         stock_date <- suppressWarnings(as.Date(stock_date_raw))
+         if (is.null(stock_date_raw) || is.na(stock_date)) {
+            stock_date <- Sys.Date()
+         }
          initial <- suppressWarnings(as.numeric(input$manual_initial_inventory))
          restock <- suppressWarnings(as.numeric(input$manual_restock))
          unit_cost <- suppressWarnings(as.numeric(input$manual_unit_cost))
@@ -12530,15 +12611,16 @@ server <-
             updated_at = Sys.time()
          )
          manual_values$stock <- manual_values$stock %>%
+            mutate(sku = stringi::stri_trans_nfkc(trimws(.data$sku))) %>%
             filter(.data$sku != sku) %>%
             bind_rows(row) %>%
             arrange(.data$sku)
-         if (nzchar(sku_new)) {
-            manual_values$sku_custom <- sort(unique(c(manual_values$sku_custom, sku_new)))
-         }
+         manual_values$sku_custom <- sort(unique(c(manual_values$sku_custom, sku)))
+         update_step_status(1, TRUE)
          updateSelectInput(session, "manual_sku_pick", choices = manual_sku_choices(), selected = sku)
          updateTextInput(session, "manual_sku_new", value = "")
-         showNotification("직접 입력 값이 저장되었습니다.", type = "message", duration = 3)
+         msg <- if (is_update) "기존 SKU가 업데이트되었습니다." else "새 SKU가 추가되었습니다."
+         showNotification(paste0(msg, " (", nrow(manual_values$stock), "개 SKU)"), type = "message", duration = 3)
       })
 
       output$manual_stock_table <- DT::renderDT({
@@ -12589,9 +12671,49 @@ server <-
          sum(merged$current_inventory, na.rm = TRUE)
       })
 
+      manual_summary_df <- reactive({
+         stock <- manual_values$stock
+         if (is.null(stock) || nrow(stock) == 0) {
+            return(tibble(
+               year = integer(),
+               sales = numeric(),
+               inventory = numeric(),
+               net_income = numeric(),
+               total_assets = numeric(),
+               cogs = numeric(),
+               source = character()
+            ))
+         }
+         stock %>%
+            mutate(
+               stock_date = as.Date(.data$stock_date),
+               year = as.integer(format(coalesce(.data$stock_date, Sys.Date()), "%Y")),
+               inventory = .data$initial_inventory + .data$restock,
+               sales = NA_real_,
+               net_income = .data$net_profit,
+               total_assets = NA_real_,
+               cogs = NA_real_,
+               source = "My Company"
+            ) %>%
+            group_by(.data$source, .data$year) %>%
+            summarize(
+               sales = sum(.data$sales, na.rm = TRUE),
+               inventory = sum(.data$inventory, na.rm = TRUE),
+               net_income = sum(.data$net_income, na.rm = TRUE),
+               total_assets = sum(.data$total_assets, na.rm = TRUE),
+               cogs = sum(.data$cogs, na.rm = TRUE),
+               .groups = "drop"
+            )
+      })
+
       fin_combined_df <- reactive({
          rows <- list(fin_values$df_dart, fin_values$df_my_norm)
          rows <- lapply(rows, function(x) if (is.null(x)) tibble(year = integer(), sales = numeric(), inventory = numeric(), net_income = numeric(), total_assets = numeric(), cogs = numeric(), source = character()) else x)
+         manual_summary <- manual_summary_df()
+         has_my <- !is.null(fin_values$df_my_norm) && nrow(fin_values$df_my_norm) > 0
+         if (!has_my && !is.null(manual_summary) && nrow(manual_summary) > 0) {
+            rows <- append(rows, list(manual_summary))
+         }
         df <- bind_rows(rows) %>%
            filter(!is.na(.data$year)) %>%
            group_by(.data$source, .data$year) %>%
@@ -12703,7 +12825,13 @@ server <-
       data_health <- reactive({
          df <- values$clean_data
          raw <- values$raw_data
+         ts_df <- if (!is.null(fin_values$df_my_norm) && nrow(fin_values$df_my_norm) > 0) {
+            fin_values$df_my_norm
+         } else {
+            df
+         }
          years <- if (!is.null(df)) unique(df$year) else integer()
+         info <- fin_ts_info(ts_df)
          nulls <- if (!is.null(df)) {
             cols <- intersect(c("year", "sales", "inventory"), names(df))
             sum(!complete.cases(df[, cols, drop = FALSE]))
@@ -12712,7 +12840,11 @@ server <-
             has_raw = !is.null(raw) && nrow(raw) > 0,
             has_clean = !is.null(df) && nrow(df) > 0,
             nulls = nulls,
-            year_count = length(years),
+            period_count = info$period_count,
+            period_label = info$label,
+            period_suffix = info$count_suffix,
+            min_periods = fin_min_periods(info),
+            is_subyear = info$is_subyear,
             latest_year = if (length(years)) max(years) else NA_integer_
          )
       })
@@ -12720,7 +12852,7 @@ server <-
       observe({
          h <- data_health()
          diag_ready <- isTRUE(h$has_clean) && (is.na(h$nulls) || h$nulls == 0)
-         pred_ready <- diag_ready && h$year_count >= 3
+         pred_ready <- diag_ready && h$period_count >= h$min_periods
          action_ready <- pred_ready && !is.null(values$forecast_res)
          diag_sel <- "a[data-value='tab_diagnosis']"
          pred_sel <- "a[data-value='tab_prediction']"
@@ -12754,27 +12886,47 @@ server <-
          } else {
             "필수 컬럼에서 결측이 발견되지 않았습니다."
          }
-         year_status <- if (h$year_count >= 3) "ok" else if (h$year_count > 0) "warn" else "pending"
-         year_desc <- if (h$year_count == 0) {
-            "최소 1개 파일을 업로드하면 연도 범위를 계산합니다."
-         } else if (h$year_count < 3) {
-            "예측을 위해 3개 이상 연도를 확보해주세요."
+         period_ready <- h$period_count >= h$min_periods
+         period_status <- if (period_ready) "ok" else if (h$period_count > 0) "warn" else "pending"
+         period_desc <- if (h$period_count == 0) {
+            "최소 1개 파일을 업로드하면 기간 범위를 계산합니다."
+         } else if (!period_ready) {
+            if (h$is_subyear) {
+               paste0("예측을 위해 ", h$min_periods, "개월 이상 확보해주세요.")
+            } else {
+               paste0("예측을 위해 연도 ", h$min_periods, "개 이상 확보해주세요.")
+            }
          } else {
-            paste0(h$year_count, "개 연도로 예측을 준비할 수 있습니다.")
+            if (h$is_subyear) {
+               paste0(h$period_count, "개월 데이터로 예측을 준비할 수 있습니다.")
+            } else {
+               paste0(h$period_count, "개 연도로 예측을 준비할 수 있습니다.")
+            }
          }
          forecast_ready <- !is.null(values$forecast_res)
-         forecast_status <- if (forecast_ready) "ok" else if (h$year_count >= 3) "warn" else "alert"
+         forecast_status <- if (forecast_ready) "ok" else if (period_ready) "warn" else "alert"
          forecast_desc <- if (forecast_ready) {
             "이제 ‘현황 진단’ 또는 ‘예측 실행’을 눌러 결과를 확인하세요."
-         } else if (h$year_count >= 3) {
+         } else if (period_ready) {
             "예측 실행 버튼을 눌러 리본 포함 전망을 생성하세요."
          } else {
-            "연도 3개 이상 확보 후 예측 실행이 가능합니다."
+            if (h$is_subyear) {
+               paste0(h$min_periods, "개월 이상 확보 후 예측 실행이 가능합니다.")
+            } else {
+               paste0("연도 ", h$min_periods, "개 이상 확보 후 예측 실행이 가능합니다.")
+            }
+         }
+         period_title <- if (h$period_count == 0) {
+            if (h$is_subyear) "기간 데이터 없음" else "연도 데이터 없음"
+         } else if (h$is_subyear) {
+            paste0(h$period_count, "개월 확보")
+         } else {
+            paste0(h$period_count, "개 연도 확보")
          }
          div(
             class = "precheck-card-grid",
             mk_card(if (null_status == "ok") "🟢" else if (null_status == "alert") "⚠️" else "⌛", "데이터 이상 여부", null_desc, null_status),
-            mk_card("📅", if (h$year_count == 0) "연도 데이터 없음" else paste0(h$year_count, "개 연도 확보"), year_desc, year_status),
+            mk_card("📅", period_title, period_desc, period_status),
             mk_card("▶️", if (forecast_ready) "예측 실행 가능" else "예측 준비 중", forecast_desc, forecast_status)
          )
       })
@@ -12782,12 +12934,16 @@ server <-
       output$tab_lock_notice <- renderUI({
          h <- data_health()
          ready_diag <- isTRUE(h$has_clean) && (is.na(h$nulls) || h$nulls == 0)
-         ready_pred <- ready_diag && h$year_count >= 3
+         ready_pred <- ready_diag && h$period_count >= h$min_periods
          ready_action <- ready_pred && !is.null(values$forecast_res)
          msg <- if (!ready_diag) {
             "🟥 업로드/매핑을 먼저 완료하면 진단 탭이 열립니다."
          } else if (!ready_pred) {
-            "🟡 연도 3개 이상이 확보되면 예측 탭이 활성화됩니다."
+            if (h$is_subyear) {
+               paste0("🟡 ", h$min_periods, "개월 이상이 확보되면 예측 탭이 활성화됩니다.")
+            } else {
+               paste0("🟡 연도 ", h$min_periods, "개 이상이 확보되면 예측 탭이 활성화됩니다.")
+            }
          } else if (!ready_action) {
             "🟡 예측을 실행하면 액션 플랜 탭이 활성화됩니다."
          } else {
@@ -12798,12 +12954,14 @@ server <-
 
       observeEvent(list(fin_forecast_df(), input$pred_source), {
          df_all <- fin_forecast_df()
-         yr_all <- if (!is.null(df_all) && "year" %in% names(df_all)) dplyr::n_distinct(df_all$year) else 0
-         if (is.null(df_all) || yr_all < 3) return()
+         info_all <- fin_ts_info(df_all)
+         min_all <- fin_min_periods(info_all)
+         if (is.null(df_all) || info_all$period_count < min_all) return()
          chosen_source <- pred_source_selected()
          if (is.null(chosen_source)) return()
          df <- df_all %>% filter(.data$source == chosen_source)
-         if (!"year" %in% names(df) || dplyr::n_distinct(df$year) < 3) return()
+         info_src <- fin_ts_info(df)
+         if (info_src$period_count < fin_min_periods(info_src)) return()
          horizon <- if (!is.null(input$fin_forecast_y)) {
             max(1L, min(5L, as.integer(input$fin_forecast_y)))
          } else {
@@ -13038,13 +13196,25 @@ server <-
 
       observeEvent(input$fin_do_forecast, {
          df_all <- fin_forecast_df()
-         yr_all <- if (!is.null(df_all) && "year" %in% names(df_all)) dplyr::n_distinct(df_all$year) else 0
-         fin_validate(fin_need(yr_all > 2, "예측을 위해 최소 3개 연도가 필요합니다."))
+         info_all <- fin_ts_info(df_all)
+         min_all <- fin_min_periods(info_all)
+         need_all_msg <- if (isTRUE(info_all$is_subyear)) {
+            paste0("예측을 위해 최소 ", min_all, "개월 데이터가 필요합니다.")
+         } else {
+            paste0("예측을 위해 최소 ", min_all, "개 연도가 필요합니다.")
+         }
+         fin_validate(fin_need(info_all$period_count >= min_all, need_all_msg))
          chosen_source <- pred_source_selected()
          fin_validate(fin_need(!is.null(chosen_source), "예측할 소스를 선택하세요."))
          df <- df_all %>% filter(.data$source == chosen_source)
-         yr_src <- if (!is.null(df) && "year" %in% names(df)) dplyr::n_distinct(df$year) else 0
-         fin_validate(fin_need(yr_src > 2, paste0("예측을 위해 ", chosen_source, " 데이터가 최소 3개 연도 필요합니다.")))
+         info_src <- fin_ts_info(df)
+         min_src <- fin_min_periods(info_src)
+         need_src_msg <- if (isTRUE(info_src$is_subyear)) {
+            paste0("예측을 위해 ", chosen_source, " 데이터가 최소 ", min_src, "개월 필요합니다.")
+         } else {
+            paste0("예측을 위해 ", chosen_source, " 데이터가 최소 ", min_src, "개 연도 필요합니다.")
+         }
+         fin_validate(fin_need(info_src$period_count >= min_src, need_src_msg))
          last_year <- max(df$year, na.rm = TRUE)
          horizon <- min(as.integer(input$fin_forecast_y), max(0, 2030L - last_year))
          if (is.na(horizon) || horizon < 1) {
@@ -13951,6 +14121,120 @@ server <-
          tags$ul(class = "friendly-list", lapply(actions, tags$li))
       })
 
+      output$diag_inventory_report <- renderUI({
+         df <- fin_combined_df()
+         fin_validate(fin_need(nrow(df) > 0, "데이터를 불러오면 재고 보고서를 생성합니다."))
+         focus <- analysis_focus_source()
+         target <- df %>% filter(.data$source == focus)
+         fin_validate(fin_need(nrow(target) > 0, "선택된 소스 데이터가 없습니다."))
+         latest_year <- max(target$year, na.rm = TRUE)
+         latest <- target %>% filter(.data$year == latest_year)
+
+         sales <- sum(latest$sales, na.rm = TRUE)
+         inventory <- sum(latest$inventory, na.rm = TRUE)
+         inv_ratio <- if (is.finite(sales) && sales != 0) inventory / sales else NA_real_
+         inv_turn <- mean(latest$inventory_turnover, na.rm = TRUE)
+         roa <- mean(latest$roa, na.rm = TRUE)
+
+         prev_year <- suppressWarnings(max(target$year[target$year < latest_year], na.rm = TRUE))
+         prev <- if (is.finite(prev_year)) target %>% filter(.data$year == prev_year) else NULL
+         prev_sales <- if (!is.null(prev) && nrow(prev)) sum(prev$sales, na.rm = TRUE) else NA_real_
+         sales_yoy <- if (!is.na(prev_sales) && prev_sales != 0) (sales - prev_sales) / prev_sales else NA_real_
+
+         fmt_pct <- function(x) if (is.na(x)) "-" else scales::percent(x, accuracy = 0.1)
+         inv_ratio_txt <- fmt_pct(inv_ratio)
+         inv_turn_txt <- if (is.na(inv_turn)) "-" else paste0(sprintf("%.2f", inv_turn), "회")
+         roa_txt <- fmt_pct(roa)
+         sales_yoy_txt <- fmt_pct(sales_yoy)
+
+         ratio_msg <- if (is.na(inv_ratio)) {
+            "재고/매출 비율 계산이 어려워요."
+         } else if (inv_ratio > 0.35) {
+            "재고가 매출 대비 높아 자금이 묶이기 쉬운 상태입니다."
+         } else if (inv_ratio < 0.15) {
+            "재고가 낮아 품절 위험이 있습니다."
+         } else {
+            "재고 수준이 매출 대비 균형적입니다."
+         }
+         turn_msg <- if (is.na(inv_turn)) {
+            "재고 회전율 계산이 어렵습니다."
+         } else if (inv_turn < 2) {
+            "회전이 느려 체류 기간이 길 가능성이 큽니다."
+         } else if (inv_turn < 5) {
+            "회전이 보통 수준입니다."
+         } else {
+            "회전이 빠른 편입니다."
+         }
+         growth_msg <- if (is.na(sales_yoy)) {
+            "전년 비교 데이터가 없어 추세 판단이 어렵습니다."
+         } else if (sales_yoy >= 0.1) {
+            "매출이 증가 중이라 재고 확보 여지가 있습니다."
+         } else if (sales_yoy <= -0.05) {
+            "매출이 감소 중이니 재고 축소와 정리가 우선입니다."
+         } else {
+            "매출이 안정적입니다. 재고 효율 개선에 집중하세요."
+         }
+         profit_msg <- if (is.na(roa)) {
+            "수익성 판단이 어렵습니다."
+         } else if (roa < 0.03) {
+            "마진 회복이 필요합니다."
+         } else {
+            "수익성이 양호합니다."
+         }
+
+         age_info <- fin_age_data()
+         age_vals <- age_info$age_vals
+         use_months <- isTRUE(age_info$use_months)
+         age_unit <- if (use_months) "개월" else "일"
+         old_cut <- if (use_months) 3 else 90
+         old_label <- if (use_months) "3개월" else "90일"
+         old_ratio <- if (length(age_vals)) mean(age_vals >= old_cut, na.rm = TRUE) else NA_real_
+         age_summary <- if (length(age_vals) == 0) {
+            "재고 기준일 정보가 없어 연령 분석이 어렵습니다. 기준일/입고일 컬럼을 추가하거나 직접 입력으로 기준일을 넣어주세요."
+         } else {
+            paste0(old_label, " 이상 재고 비중 ", fmt_pct(old_ratio), "입니다.")
+         }
+         top_old <- ""
+         if (!is.null(age_info$age_df) && nrow(age_info$age_df) > 0) {
+            top <- age_info$age_df %>%
+               arrange(desc(.data$age)) %>%
+               slice_head(n = 3)
+            top_old <- paste0("오래된 SKU: ", paste0(top$sku, "(", round(top$age, 1), age_unit, ")", collapse = ", "))
+         }
+
+         actions <- c()
+         if (!is.na(old_ratio) && old_ratio >= 0.4) {
+            actions <- c(actions, "장기 재고는 할인/번들/기획전으로 우선 소진하고, 반복되는 SKU는 발주량을 줄이세요.")
+         }
+         if (!is.na(inv_ratio) && inv_ratio > 0.35) {
+            actions <- c(actions, "발주량을 축소하고, 판매가 빠른 채널/옵션으로 재고를 재배치하세요.")
+         }
+         if (!is.na(inv_ratio) && inv_ratio < 0.15) {
+            actions <- c(actions, "핵심 SKU의 안전재고와 리드타임을 점검해 품절 위험을 낮추세요.")
+         }
+         if (!is.na(inv_turn) && inv_turn < 2) {
+            actions <- c(actions, "회전이 느린 SKU는 단종/반품 조건 협상으로 현금화 속도를 높이세요.")
+         }
+         if (length(actions) == 0) {
+            actions <- c("재고 수준이 안정적입니다. 베스트 SKU는 재주문하고, 느린 SKU는 소량 테스트로 관리하세요.")
+         }
+
+         tagList(
+            tags$h4(paste0("현황 요약 (", focus, " / ", latest_year, "년)")),
+            tags$ul(
+               tags$li(paste0("재고 비율: ", inv_ratio_txt, " · ", ratio_msg)),
+               tags$li(paste0("재고 회전율: ", inv_turn_txt, " · ", turn_msg)),
+               tags$li(paste0("매출 추세: ", sales_yoy_txt, " · ", growth_msg)),
+               tags$li(paste0("수익성: ", roa_txt, " · ", profit_msg))
+            ),
+            tags$h4("재고 연령/처리 포인트"),
+            tags$p(age_summary),
+            if (nzchar(top_old)) tags$p(top_old),
+            tags$h4("의사결정 가이드"),
+            tags$ul(lapply(actions, tags$li))
+         )
+      })
+
       output$analysis_kpi_row <- renderUI({
          df <- analysis_df()
          focus <- analysis_focus_source()
@@ -14074,18 +14358,77 @@ server <-
             )
       })
 
-      output$analysis_plot_2 <- renderPlotly({
+      fin_age_data <- function() {
          raw_df <- values$raw_data
-         fin_validate(fin_need(!is.null(raw_df) && nrow(raw_df) > 0, "데이터를 불러오세요"))
-         cols <- names(raw_df)
-         age_col <- fin_guess_col(cols, c("age", "aging", "재고일수", "재고기간", "days_in_stock", "stock_age"), optional = TRUE)
+         stock <- manual_values$stock
+         has_raw <- !is.null(raw_df) && nrow(raw_df) > 0
+         has_manual <- !is.null(stock) && nrow(stock) > 0
+         if (!has_raw && !has_manual) {
+            return(list(
+               age_vals = numeric(),
+               use_months = FALSE,
+               limit_label = "",
+               limited = FALSE,
+               message = "데이터를 불러오세요"
+            ))
+         }
+         cols <- if (has_raw) names(raw_df) else character()
+         sku_col <- ""
+         age_col <- ""
+         date_col <- ""
+         if (has_raw) {
+            sku_col <- if (!is.null(input$fin_col_sku) && nzchar(input$fin_col_sku) && input$fin_col_sku %in% cols) {
+               input$fin_col_sku
+            } else {
+               fin_guess_col(cols, c("sku", "item", "상품", "제품", "style", "품목"), optional = TRUE)
+            }
+            age_col <- fin_guess_col(cols, c("age", "aging", "재고일수", "재고기간", "days_in_stock", "stock_age"), optional = TRUE)
+            if (!nzchar(age_col)) {
+               date_col <- fin_guess_col(cols, c("stock_date", "stockdate", "stock_dt", "in_date", "inbound_date", "arrival_date", "stocked_at",
+                                                "입고일자", "입고일", "입고일시", "입고날짜", "재고기준일", "기준일"), optional = TRUE)
+            }
+         }
+         use_months <- FALSE
+         limited <- FALSE
+         limit_label <- ""
          age_vals <- numeric()
-         if (nzchar(age_col) && age_col %in% cols) {
-            age_vals <- suppressWarnings(as.numeric(gsub(",", "", raw_df[[age_col]])))
-         } else {
-            stock <- manual_values$stock
-            if (!is.null(stock) && nrow(stock)) {
-               sku_col <- if (!is.null(input$fin_col_sku) && nzchar(input$fin_col_sku) && input$fin_col_sku %in% cols) {
+         age_raw <- NULL
+         age_df <- tibble(sku = character(), age = numeric())
+         message <- ""
+
+         if (has_raw) {
+            if (nzchar(age_col) && age_col %in% cols) {
+               age_raw <- suppressWarnings(as.numeric(gsub(",", "", raw_df[[age_col]])))
+            } else if (nzchar(date_col) && date_col %in% cols) {
+               date_vals <- fin_parse_invoice_date(raw_df[[date_col]])
+               age_raw <- as.numeric(difftime(Sys.Date(), date_vals, units = "days")) / 30
+               use_months <- TRUE
+            }
+         }
+         if (!is.null(age_raw)) {
+            if (nzchar(sku_col) && sku_col %in% cols) {
+               sku_vals <- stringi::stri_trans_nfkc(trimws(as.character(raw_df[[sku_col]])))
+               age_df_raw <- tibble(sku = sku_vals, age = age_raw) %>%
+                  filter(nzchar(.data$sku), is.finite(.data$age), .data$age >= 0)
+               if (nrow(age_df_raw)) {
+                  age_df <- age_df_raw %>%
+                     group_by(.data$sku) %>%
+                     summarize(age = median(.data$age, na.rm = TRUE), .groups = "drop") %>%
+                     arrange(desc(.data$age))
+               }
+               age_vals <- age_df$age
+            } else {
+               age_vals <- age_raw[is.finite(age_raw) & age_raw >= 0]
+            }
+         }
+         if (length(age_vals) == 0 && has_manual) {
+            stock <- stock %>%
+               mutate(sku = stringi::stri_trans_nfkc(trimws(.data$sku))) %>%
+               filter(nzchar(.data$sku))
+            sku_col_manual <- ""
+            qty_col <- ""
+            if (has_raw) {
+               sku_col_manual <- if (!is.null(input$fin_col_sku) && nzchar(input$fin_col_sku) && input$fin_col_sku %in% cols) {
                   input$fin_col_sku
                } else {
                   fin_guess_col(cols, c("sku", "item", "상품", "제품", "style", "품목"), optional = TRUE)
@@ -14095,37 +14438,101 @@ server <-
                } else {
                   fin_guess_col(cols, c("quantity", "qty", "수량", "판매수량"), optional = TRUE)
                }
-               sales_df <- NULL
-               if (nzchar(sku_col) && nzchar(qty_col) && sku_col %in% cols && qty_col %in% cols) {
-                  sales_df <- tibble(
-                     sku = as.character(raw_df[[sku_col]]),
-                     qty = suppressWarnings(as.numeric(gsub(",", "", raw_df[[qty_col]])))
-                  ) %>%
-                     filter(nzchar(.data$sku), is.finite(.data$qty)) %>%
-                     group_by(.data$sku) %>%
-                     summarize(sales_qty = sum(.data$qty, na.rm = TRUE), .groups = "drop")
-               }
-               merged <- stock %>%
+            }
+            sales_df <- NULL
+            if (has_raw && nzchar(sku_col_manual) && nzchar(qty_col) && sku_col_manual %in% cols && qty_col %in% cols) {
+               sales_df <- tibble(
+                  sku = as.character(raw_df[[sku_col_manual]]),
+                  qty = suppressWarnings(as.numeric(gsub(",", "", raw_df[[qty_col]])))
+               ) %>%
+                  filter(nzchar(.data$sku), is.finite(.data$qty)) %>%
+                  group_by(.data$sku) %>%
+                  summarize(sales_qty = sum(.data$qty, na.rm = TRUE), .groups = "drop")
+            }
+            merged <- if (!is.null(sales_df) && nrow(sales_df)) {
+               stock %>%
                   left_join(sales_df, by = "sku") %>%
                   mutate(
                      sales_qty = coalesce(.data$sales_qty, 0),
                      current_inventory = .data$initial_inventory + .data$restock - .data$sales_qty
-                  ) %>%
-                  filter(is.finite(.data$current_inventory), .data$current_inventory > 0, !is.na(.data$stock_date))
-               if (nrow(merged)) {
-                  age_days <- as.numeric(difftime(Sys.Date(), merged$stock_date, units = "days"))
-                  age_vals <- age_days / 30
-               }
+                  )
+            } else {
+               stock %>%
+                  mutate(
+                     sales_qty = 0,
+                     current_inventory = .data$initial_inventory + .data$restock
+                  )
+            }
+            merged <- merged %>%
+               mutate(
+                  stock_date = as.Date(coalesce(.data$stock_date, as.Date(.data$updated_at), Sys.Date())),
+                  current_inventory = pmax(.data$current_inventory, 0)
+               ) %>%
+               filter(is.finite(.data$current_inventory), !is.na(.data$stock_date))
+            if (nrow(merged)) {
+               merged <- merged %>%
+                  mutate(age = as.numeric(difftime(Sys.Date(), .data$stock_date, units = "days")) / 30) %>%
+                  filter(is.finite(.data$age), .data$age >= 0)
+               age_df <- merged %>%
+                  group_by(.data$sku) %>%
+                  summarize(age = mean(.data$age, na.rm = TRUE), .groups = "drop") %>%
+                  arrange(desc(.data$age))
+               age_vals <- age_df$age
+               use_months <- TRUE
             }
          }
          age_vals <- age_vals[is.finite(age_vals)]
-         fin_validate(fin_need(length(age_vals) > 0, "재고 연령 데이터가 없습니다. 기준일을 입력하거나 컬럼을 확인하세요."))
-         df <- tibble(age = age_vals)
-         plot_ly(df, x = ~age, type = "histogram", nbinsx = 12) %>%
-            layout(
-               xaxis = list(title = "재고 보관 기간(개월)"),
-               yaxis = list(title = "SKU 수")
+         if (length(age_vals) == 0) {
+            message <- "재고 연령 데이터가 없습니다. 기준일을 입력하거나 컬럼을 확인하세요."
+         }
+         list(age_vals = age_vals, age_df = age_df, use_months = use_months, limit_label = limit_label, limited = limited, message = message)
+      }
+
+      output$analysis_plot_2 <- renderPlotly({
+         age_info <- fin_age_data()
+         if (length(age_info$age_vals) == 0) {
+            return(
+               plot_ly() %>%
+                  layout(
+                     xaxis = list(visible = FALSE),
+                     yaxis = list(visible = FALSE),
+                     annotations = list(list(
+                        text = age_info$message,
+                        x = 0.5, y = 0.5,
+                        xref = "paper", yref = "paper",
+                        showarrow = FALSE
+                     ))
+                  )
             )
+         }
+         unit_label <- if (isTRUE(age_info$use_months)) "개월" else "일"
+         if (!is.null(age_info$age_df) && nrow(age_info$age_df) > 0) {
+            df <- age_info$age_df %>%
+               mutate(sku = stringi::stri_trans_nfkc(trimws(.data$sku))) %>%
+               filter(nzchar(.data$sku)) %>%
+               arrange(.data$age)
+            plot_height <- max(320, 22L * nrow(df))
+            plot_ly(
+               df,
+               x = ~age,
+               y = ~reorder(sku, age),
+               type = "bar",
+               orientation = "h",
+               hovertemplate = paste0("SKU: %{y}<br>보관: %{x:.1f}", unit_label, "<extra></extra>")
+            ) %>%
+               layout(
+                  height = plot_height,
+                  xaxis = list(title = paste0("재고 보관 기간(", unit_label, ")")),
+                  yaxis = list(title = "SKU", automargin = TRUE)
+               )
+         } else {
+            df <- tibble(age = age_info$age_vals)
+            plot_ly(df, x = ~age, type = "histogram", nbinsx = 12) %>%
+               layout(
+                  xaxis = list(title = paste0("재고 보관 기간(", unit_label, ")")),
+                  yaxis = list(title = "표본 수")
+               )
+         }
       })
 
       output$analysis_plot_3 <- renderPlotly({
@@ -14154,66 +14561,49 @@ server <-
       })
 
       output$analysis_desc_1 <- renderText({
-         raw_df <- values$raw_data
-         fin_validate(fin_need(!is.null(raw_df) && nrow(raw_df) > 0, "데이터를 불러오세요"))
-         cols <- names(raw_df)
-         age_col <- fin_guess_col(cols, c("age", "aging", "재고일수", "재고기간", "days_in_stock", "stock_age"), optional = TRUE)
-         age_vals <- numeric()
-         use_months <- FALSE
-         if (nzchar(age_col) && age_col %in% cols) {
-            age_vals <- suppressWarnings(as.numeric(gsub(",", "", raw_df[[age_col]])))
+         age_info <- fin_age_data()
+         if (length(age_info$age_vals) == 0) return(age_info$message)
+         age_vals <- age_info$age_vals
+         use_months <- age_info$use_months
+         note <- if (nzchar(age_info$limit_label)) paste0(" (", age_info$limit_label, ")") else ""
+         plot_hint <- if (!is.null(age_info$age_df) && nrow(age_info$age_df) > 0) {
+            "막대는 SKU별 보관 기간입니다. "
          } else {
-            stock <- manual_values$stock
-            if (!is.null(stock) && nrow(stock)) {
-               sku_col <- if (!is.null(input$fin_col_sku) && nzchar(input$fin_col_sku) && input$fin_col_sku %in% cols) {
-                  input$fin_col_sku
-               } else {
-                  fin_guess_col(cols, c("sku", "item", "상품", "제품", "style", "품목"), optional = TRUE)
-               }
-               qty_col <- if (!is.null(input$fin_col_qty) && nzchar(input$fin_col_qty) && input$fin_col_qty %in% cols) {
-                  input$fin_col_qty
-               } else {
-                  fin_guess_col(cols, c("quantity", "qty", "수량", "판매수량"), optional = TRUE)
-               }
-               sales_df <- NULL
-               if (nzchar(sku_col) && nzchar(qty_col) && sku_col %in% cols && qty_col %in% cols) {
-                  sales_df <- tibble(
-                     sku = as.character(raw_df[[sku_col]]),
-                     qty = suppressWarnings(as.numeric(gsub(",", "", raw_df[[qty_col]])))
-                  ) %>%
-                     filter(nzchar(.data$sku), is.finite(.data$qty)) %>%
-                     group_by(.data$sku) %>%
-                     summarize(sales_qty = sum(.data$qty, na.rm = TRUE), .groups = "drop")
-               }
-               merged <- stock %>%
-                  left_join(sales_df, by = "sku") %>%
-                  mutate(
-                     sales_qty = coalesce(.data$sales_qty, 0),
-                     current_inventory = .data$initial_inventory + .data$restock - .data$sales_qty
-                  ) %>%
-                  filter(is.finite(.data$current_inventory), .data$current_inventory > 0, !is.na(.data$stock_date))
-               if (nrow(merged)) {
-                  age_days <- as.numeric(difftime(Sys.Date(), merged$stock_date, units = "days"))
-                  age_vals <- age_days / 30
-                  use_months <- TRUE
-               }
-            }
+            "막대는 보관 기간 분포입니다. "
          }
-         age_vals <- age_vals[is.finite(age_vals)]
-         fin_validate(fin_need(length(age_vals) > 0, "재고 연령 데이터가 없습니다. 기준일을 입력하거나 컬럼을 확인하세요."))
          avg_age <- mean(age_vals, na.rm = TRUE)
          med_age <- median(age_vals, na.rm = TRUE)
          if (use_months) {
             old_ratio <- mean(age_vals >= 3, na.rm = TRUE)
+            action <- if (old_ratio >= 0.4) {
+               "오래된 재고가 많아요. 3개월 이상 SKU는 할인/번들/기획전으로 먼저 소진하고, 반복되는 SKU는 발주량 축소나 공급가 재협상을 검토하세요."
+            } else if (old_ratio >= 0.2) {
+               "느린 SKU가 일부 보입니다. 오래된 SKU부터 가격 조정, 노출 강화, 발주 축소 순으로 점검해보세요."
+            } else {
+               "재고 회전이 비교적 건강합니다. 잘 팔리는 SKU는 재주문하고, 느린 SKU는 소량 테스트로 리스크를 줄이세요."
+            }
             paste0(
-               "평균 보관 ", round(avg_age, 1), "개월, 중앙값 ", round(med_age, 1), "개월. ",
-               "3개월 이상 재고 비중 ", scales::percent(old_ratio, accuracy = 0.1)
+               plot_hint,
+               "평균 보관 ", round(avg_age, 1), "개월, 중앙값 ", round(med_age, 1), "개월, ",
+               "3개월 이상 재고 비중 ", scales::percent(old_ratio, accuracy = 0.1),
+               note, ". ",
+               action
             )
          } else {
             old_ratio <- mean(age_vals >= 90, na.rm = TRUE)
+            action <- if (old_ratio >= 0.4) {
+               "오래된 재고가 많아요. 90일 이상 SKU는 할인/번들/기획전으로 먼저 소진하고, 반복되는 SKU는 발주량 축소나 공급가 재협상을 검토하세요."
+            } else if (old_ratio >= 0.2) {
+               "느린 SKU가 일부 보입니다. 오래된 SKU부터 가격 조정, 노출 강화, 발주 축소 순으로 점검해보세요."
+            } else {
+               "재고 회전이 비교적 건강합니다. 잘 팔리는 SKU는 재주문하고, 느린 SKU는 소량 테스트로 리스크를 줄이세요."
+            }
             paste0(
-               "평균 보관 ", round(avg_age), "일, 중앙값 ", round(med_age), "일. ",
-               "90일 이상 재고 비중 ", scales::percent(old_ratio, accuracy = 0.1)
+               plot_hint,
+               "평균 보관 ", round(avg_age), "일, 중앙값 ", round(med_age), "일, ",
+               "90일 이상 재고 비중 ", scales::percent(old_ratio, accuracy = 0.1),
+               note, ". ",
+               action
             )
          }
       })
@@ -14387,11 +14777,12 @@ server <-
             arrange(.data$year)
          forecasts <- list()
          for (s in sources) {
-            df_src <- fc_all %>%
-               filter(.data$source == s) %>%
-               mutate(sales = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales, NA_real_)) %>%
-               filter(!is.na(.data$sales))
-            if (!"year" %in% names(df_src) || dplyr::n_distinct(df_src$year) < 3) next
+           df_src <- fc_all %>%
+              filter(.data$source == s) %>%
+              mutate(sales = if_else(is.finite(.data$sales) & .data$sales > 0, .data$sales, NA_real_)) %>%
+              filter(!is.na(.data$sales))
+            ts_info <- fin_ts_info(df_src)
+            if (ts_info$period_count < fin_min_periods(ts_info)) next
             fc_try <- try(fin_safe_prophet(df_src, horizon, source_name = s), silent = TRUE)
             if (inherits(fc_try, "try-error") || is.null(fc_try$forecast)) next
             forecasts[[s]] <- fc_try$forecast %>% mutate(source = s, yhat = yhat / 1e8, yhat_lower = yhat_lower / 1e8, yhat_upper = yhat_upper / 1e8)

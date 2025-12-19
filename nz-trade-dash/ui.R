@@ -316,8 +316,8 @@ body <- dashboardBody(
               tags$p("샘플 템플릿을 내려받아 컬럼명을 맞추면 자동 매핑됩니다.")
             ),
             tags$details(
-              tags$summary("연도가 2개뿐인데 가능한가요?"),
-              tags$p("Pre-Check에서 최소 연도 수 안내를 드리며, 3개 이상일 때 예측이 활성화됩니다.")
+              tags$summary("데이터 시점이 2개뿐인데 가능한가요?"),
+              tags$p("Pre-Check에서 최소 시점 수 안내를 드리며, 3개 이상일 때 예측이 활성화됩니다.")
             ),
             tags$details(
               tags$summary("데이터 품질이 걱정돼요."),
@@ -390,6 +390,16 @@ body <- dashboardBody(
         column(width = 3, uiOutput("fin_kpi_doi")),
         column(width = 3, uiOutput("fin_kpi_overstock")),
         column(width = 3, uiOutput("fin_kpi_stockout"))
+      ),
+      fluidRow(
+        box(
+          title = "재고 처리 보고서",
+          width = 12,
+          status = NULL,
+          solidHeader = TRUE,
+          class = "diag-main-box",
+          htmlOutput("diag_inventory_report", class = "viz-text-lg")
+        )
       ),
       fluidRow(
         box(
