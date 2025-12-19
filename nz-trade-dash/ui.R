@@ -168,11 +168,34 @@ body <- dashboardBody(
                     ),
                     tags$ul(
                       class = "upload-points",
-                      tags$li("필수 컬럼: 연도, 매출, 재고"),
-                      tags$li("선택 컬럼: SKU, 재고연령(aging), 채널, 순이익 등 정밀 진단용")
+                      tags$li("필수 컬럼: 연도, 매출 (재고는 직접 입력 시 생략 가능)"),
+                      tags$li("선택 컬럼: SKU, 판매수량(Quantity), 채널, 순이익 등 정밀 진단용"),
+                      tags$li("재고 연령(aging)은 직접 입력 기준일로 자동 계산됩니다.")
                     )
                   ),
                   uiOutput("fin_mapping_ui")
+                )
+              ),
+              tabPanel(
+                title = "직접 입력",
+                div(
+                  class = "step-section",
+                  tags$p("파일 업로드 대신 직접 입력으로 재고와 원가를 관리할 수 있습니다."),
+                  tags$div(class = "assist-text", "SKU 목록은 파일 업로드 후 자동으로 채워집니다. 없으면 직접 추가하세요."),
+                  selectInput("manual_sku_pick", "상품 선택", choices = c()),
+                  textInput("manual_sku_new", "새 SKU 추가(선택)", placeholder = "예: A001"),
+                  actionButton("manual_sku_add", "SKU 추가", class = "btn btn-default btn-sm"),
+                  tags$div(class = "assist-text", "새 SKU는 입력 후 바로 저장해도 자동으로 추가됩니다."),
+                  tags$hr(),
+                  dateInput("manual_stock_date", "재고 기준일", value = Sys.Date()),
+                  numericInput("manual_initial_inventory", "초기 재고", value = 0, min = 0),
+                  numericInput("manual_restock", "입고/보충 수량", value = 0, min = 0),
+                  numericInput("manual_unit_cost", "원가(개당, 선택)", value = NA),
+                  numericInput("manual_unit_price", "판매가(개당, 선택)", value = NA),
+                  numericInput("manual_net_profit", "상품별 순이익(선택)", value = NA),
+                  actionButton("manual_save", "입력 저장", class = "btn btn-primary"),
+                  tags$hr(),
+                  DT::dataTableOutput("manual_stock_table")
                 )
               ),
               tabPanel(
